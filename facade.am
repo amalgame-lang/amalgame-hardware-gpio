@@ -35,6 +35,7 @@ namespace Amalgame.Hardware
     #include <stdint.h>
     #include <stdlib.h>
     #include <string.h>
+    #include <poll.h>
 
     /* One libgpiod line-request per configured pin. Simplest
      * mapping for the flat API: PinMode requests (or re-requests)
@@ -44,6 +45,16 @@ namespace Amalgame.Hardware
     static struct gpiod_chip         *amhw_chip = NULL;
     static struct gpiod_line_request *amhw_req[AMHW_MAX_PIN];
     static char amhw_chip_path[256] = "/dev/gpiochip0";
+
+    /* Edge-event state (Phase 2). amhw_watched[pin] marks lines
+     * requested with edge detection; amhw_evbuf is a shared 1-slot
+     * read buffer; amhw_last_* hold the most recently drained event
+     * so the AM side can build a GpioEvent record from primitives. */
+    static int amhw_watched[AMHW_MAX_PIN];
+    static struct gpiod_edge_event_buffer *amhw_evbuf = NULL;
+    static int     amhw_last_kind = 1;   /* 1=rising, 2=falling */
+    static int64_t amhw_last_pin  = -1;
+    static int64_t amhw_last_ts   = 0;
 
     /* Open the configured chip if not already open. -1 on failure. */
     static int amhw_ensure_chip(void) {
@@ -59,6 +70,11 @@ namespace Amalgame.Hardware
                 gpiod_line_request_release(amhw_req[i]);
                 amhw_req[i] = NULL;
             }
+            amhw_watched[i] = 0;
+        }
+        if (amhw_evbuf) {
+            gpiod_edge_event_buffer_free(amhw_evbuf);
+            amhw_evbuf = NULL;
         }
         if (amhw_chip) {
             gpiod_chip_close(amhw_chip);
@@ -147,6 +163,103 @@ namespace Amalgame.Hardware
             gpiod_line_request_release(amhw_req[pin]);
             amhw_req[pin] = NULL;
         }
+        amhw_watched[pin] = 0;
+    }
+
+    /* ── Edge events (Phase 2) ─────────────────────────────
+     *
+     * edge: 1=rising, 2=falling, 3=both. Re-requests the line as an
+     * input with kernel edge detection enabled, so the request's fd
+     * becomes readable when a matching transition arrives. 0 on
+     * success. */
+    static int amhw_pin_watch(int64_t pin, int64_t edge) {
+        if (pin < 0 || pin >= AMHW_MAX_PIN) return -1;
+        if (amhw_ensure_chip() != 0) return -1;
+
+        if (amhw_req[pin]) {
+            gpiod_line_request_release(amhw_req[pin]);
+            amhw_req[pin] = NULL;
+        }
+        amhw_watched[pin] = 0;
+
+        struct gpiod_line_settings *settings = gpiod_line_settings_new();
+        if (!settings) return -1;
+        gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_INPUT);
+        enum gpiod_line_edge e =
+            (edge == 1) ? GPIOD_LINE_EDGE_RISING  :
+            (edge == 2) ? GPIOD_LINE_EDGE_FALLING : GPIOD_LINE_EDGE_BOTH;
+        gpiod_line_settings_set_edge_detection(settings, e);
+
+        struct gpiod_line_config *lcfg = gpiod_line_config_new();
+        unsigned int offset = (unsigned int) pin;
+        int rc = -1;
+        if (lcfg &&
+            gpiod_line_config_add_line_settings(lcfg, &offset, 1, settings) == 0) {
+            struct gpiod_request_config *rcfg = gpiod_request_config_new();
+            if (rcfg) {
+                gpiod_request_config_set_consumer(rcfg, "amalgame-hardware-gpio");
+                struct gpiod_line_request *req =
+                    gpiod_chip_request_lines(amhw_chip, rcfg, lcfg);
+                if (req) {
+                    amhw_req[pin] = req;
+                    amhw_watched[pin] = 1;
+                    rc = 0;
+                }
+                gpiod_request_config_free(rcfg);
+            }
+        }
+        if (lcfg) gpiod_line_config_free(lcfg);
+        gpiod_line_settings_free(settings);
+        return rc;
+    }
+
+    /* Poll every watched line for up to timeout_ms (negative blocks
+     * forever, 0 returns immediately) and, if one has a pending edge,
+     * read exactly one event into amhw_last_*. Returns 1 if an event
+     * was captured, 0 on timeout / none. PollEdges loops on this with
+     * timeout 0 to drain the whole queue. */
+    static int amhw_wait_one(int64_t timeout_ms) {
+        struct pollfd pfds[AMHW_MAX_PIN];
+        int pins[AMHW_MAX_PIN];
+        int n = 0;
+        for (int i = 0; i < AMHW_MAX_PIN; i++) {
+            if (amhw_watched[i] && amhw_req[i]) {
+                int fd = gpiod_line_request_get_fd(amhw_req[i]);
+                if (fd >= 0) {
+                    pfds[n].fd = fd;
+                    pfds[n].events = POLLIN;
+                    pfds[n].revents = 0;
+                    pins[n] = i;
+                    n++;
+                }
+            }
+        }
+        if (n == 0) return 0;
+
+        int pr = poll(pfds, (nfds_t) n, (int) timeout_ms);
+        if (pr <= 0) return 0;
+
+        if (!amhw_evbuf) {
+            amhw_evbuf = gpiod_edge_event_buffer_new(1);
+            if (!amhw_evbuf) return 0;
+        }
+        for (int i = 0; i < n; i++) {
+            if (pfds[i].revents & POLLIN) {
+                int rd = gpiod_line_request_read_edge_events(
+                    amhw_req[pins[i]], amhw_evbuf, 1);
+                if (rd >= 1) {
+                    struct gpiod_edge_event *ev =
+                        gpiod_edge_event_buffer_get_event(amhw_evbuf, 0);
+                    enum gpiod_edge_event_type t =
+                        gpiod_edge_event_get_event_type(ev);
+                    amhw_last_kind = (t == GPIOD_EDGE_EVENT_RISING_EDGE) ? 1 : 2;
+                    amhw_last_pin  = (int64_t) gpiod_edge_event_get_line_offset(ev);
+                    amhw_last_ts   = (int64_t) gpiod_edge_event_get_timestamp_ns(ev);
+                    return 1;
+                }
+            }
+        }
+        return 0;
     }
 }
 
@@ -164,6 +277,35 @@ public enum PinMode {
 public enum Level {
     Low
     High
+}
+
+// Edge trigger for WatchEdge, and the kind carried by a GpioEvent.
+// `Both` is only meaningful as a WatchEdge trigger — a delivered
+// event is always Rising or Falling, never Both.
+public enum Edge {
+    Rising
+    Falling
+    Both
+}
+
+// A captured edge transition. `Pin` is the BCM/offset that fired;
+// `TimestampNs` is the kernel monotonic timestamp in nanoseconds.
+// A timeout from WaitEdge is signalled by Pin == -1 (IsTimeout()).
+public class GpioEvent {
+    private kind: Edge
+    private pin:  int
+    private ts:   int
+
+    public GpioEvent(kind: Edge, pin: int, ts: int) {
+        this.kind = kind
+        this.pin  = pin
+        this.ts   = ts
+    }
+
+    public Edge KindOf()        { return this.kind }
+    public int  PinOf()         { return this.pin }
+    public int  TimestampNsOf() { return this.ts }
+    public bool IsTimeout()     { return this.pin < 0 }
 }
 
 // Flat GPIO facade. All methods are static — there is one process
@@ -223,6 +365,60 @@ public class Gpio {
     // Release one pin back to the kernel without closing the chip.
     public static void Release(pin: int) {
         @c { amhw_release(pin); }
+    }
+
+    // ── Edge events (Phase 2) ─────────────────────────────
+
+    // Request a pin as an input with kernel edge detection. After
+    // this, WaitEdge / PollEdges deliver GpioEvents for it. Replaces
+    // any prior PinMode/WatchEdge on the pin. Returns false if the
+    // line can't be requested. No internal pull is set — wire an
+    // external pull or rely on the board default.
+    public static bool WatchEdge(pin: int, edge: Edge) {
+        var e: int = 3
+        if (edge == Edge.Rising)  { e = 1 }
+        if (edge == Edge.Falling) { e = 2 }
+        var rc: int = -1
+        @c { rc = (i64) amhw_pin_watch(pin, e); }
+        return rc == 0
+    }
+
+    // Block up to timeoutMs for the next edge on any watched pin
+    // (negative blocks forever, 0 polls). Returns the GpioEvent, or a
+    // sentinel with IsTimeout() == true if nothing arrived in time.
+    public static GpioEvent WaitEdge(timeoutMs: int) {
+        var n: int = 0
+        @c { n = (i64) amhw_wait_one(timeoutMs); }
+        if (n == 1) { return Gpio.LastEvent() }
+        return new GpioEvent(Edge.Rising, -1, 0)
+    }
+
+    // Drain all edges queued on watched pins right now (non-blocking).
+    // Returns them oldest-first; empty if none are pending.
+    public static List<GpioEvent> PollEdges() {
+        var out: List<GpioEvent> = new List<GpioEvent>()
+        while (true) {
+            var n: int = 0
+            @c { n = (i64) amhw_wait_one(0); }
+            if (n != 1) { break }
+            out.Add(Gpio.LastEvent())
+        }
+        return out
+    }
+
+    // Build a GpioEvent from the last drained C event (amhw_last_*).
+    private static GpioEvent LastEvent() {
+        var k: int = 1
+        var p: int = -1
+        var t: int = 0
+        @c {
+            k = (i64) amhw_last_kind;
+            p = (i64) amhw_last_pin;
+            t = (i64) amhw_last_ts;
+        }
+        var kind: Edge = Edge.Rising
+        if (k == 2) { kind = Edge.Falling }
+        return new GpioEvent(kind, p, t)
     }
 
     // Release all pins and close the chip. Safe to call more than

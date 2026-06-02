@@ -123,18 +123,21 @@ else
 fi
 echo ""
 
-# ── examples/blink.am must still build ────────────────────
-echo "── examples/blink.am ──"
-cp "$PKG_ROOT/examples/blink.am" "$PROJ_DIR/blink.am"
-if (cd "$PROJ_DIR" && "$AMC" --quiet -o blink blink.am) 2>"$PROJ_DIR/blink.err" \
-   && gcc -O2 -I"$AMC_RUNTIME" $GPIOD_CFLAGS -w \
-        "$PROJ_DIR/blink.c" "$FACADE_BUILD_DIR/Gpio-facade.o" "$LIBA" \
-        -L"$GPIOD_LIBDIR" -lgpiod -lgc -lm -lz -ldl -lpthread \
-        -o "$PROJ_DIR/blink" 2>>"$PROJ_DIR/blink.err"; then
-    echo -e "  ${GREEN}example builds${NC}"
-else
-    echo -e "  ${RED}example build FAILED${NC}"; cat "$PROJ_DIR/blink.err"; FAIL=1
-fi
+# ── every examples/*.am must still build ──────────────────
+echo "── examples/ ──"
+for ex in "$PKG_ROOT"/examples/*.am; do
+    name="$(basename "$ex" .am)"
+    cp "$ex" "$PROJ_DIR/$name.am"
+    if (cd "$PROJ_DIR" && "$AMC" --quiet -o "$name" "$name.am") 2>"$PROJ_DIR/$name.err" \
+       && gcc -O2 -I"$AMC_RUNTIME" $GPIOD_CFLAGS -w \
+            "$PROJ_DIR/$name.c" "$FACADE_BUILD_DIR/Gpio-facade.o" "$LIBA" \
+            -L"$GPIOD_LIBDIR" -lgpiod -lgc -lm -lz -ldl -lpthread \
+            -o "$PROJ_DIR/$name" 2>>"$PROJ_DIR/$name.err"; then
+        echo -e "  ${GREEN}$name builds${NC}"
+    else
+        echo -e "  ${RED}$name build FAILED${NC}"; cat "$PROJ_DIR/$name.err"; FAIL=1
+    fi
+done
 echo ""
 
 echo "════════════════════════════════════════════"

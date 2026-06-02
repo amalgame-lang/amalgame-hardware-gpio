@@ -1,0 +1,50 @@
+// button_events.am — edge events (Phase 2).
+//
+// Arms kernel edge detection on a button wired to GPIO27 and prints
+// each press/release as it happens, using the blocking WaitEdge.
+// Unlike polling DigitalRead in a loop, this sleeps in the kernel
+// until a real transition arrives — no busy-wait, microsecond
+// timestamps straight from the driver.
+//
+//   Wiring: button between GPIO27 and GND (add an external pull-up,
+//           or enable the board default; WatchEdge sets no bias).
+//
+//   amc build examples/button_events.am -o button_events
+//   ./button_events        # needs the 'gpio' group or sudo
+//
+// Stops after 10 edges or Ctrl-C.
+
+namespace Demo
+
+import Amalgame.Hardware
+
+public class Program {
+    public static void Main(string[] args) {
+        Console.WriteLine("libgpiod backend: " + Gpio.Backend())
+
+        let button: int = 27
+        if (!Gpio.WatchEdge(button, Edge.Both)) {
+            Console.WriteLine("could not watch GPIO" + String_FromInt(button) +
+                              " — check permissions / chip path")
+            return
+        }
+        Console.WriteLine("watching GPIO27 for edges (10 then exit)…")
+
+        var seen: int = 0
+        while (seen < 10) {
+            let ev: GpioEvent = Gpio.WaitEdge(5000)
+            if (ev.IsTimeout()) {
+                Console.WriteLine("(idle 5s)")
+            } else {
+                var what: string = "falling"
+                if (ev.KindOf() == Edge.Rising) { what = "rising" }
+                Console.WriteLine(what + " edge on GPIO" +
+                                  String_FromInt(ev.PinOf()) + " @ " +
+                                  String_FromInt(ev.TimestampNsOf()) + "ns")
+                seen = seen + 1
+            }
+        }
+
+        Gpio.Close()
+    }
+}

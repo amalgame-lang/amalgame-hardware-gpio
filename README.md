@@ -66,7 +66,9 @@ Gpio.Close()
 
 See [`examples/blink.am`](examples/blink.am).
 
-## API (Phase 1)
+## API
+
+**Digital I/O (Phase 1)**
 
 | Method | Description |
 |---|---|
@@ -79,8 +81,21 @@ See [`examples/blink.am`](examples/blink.am).
 | `Gpio.Close()` | Release all lines and close the chip (idempotent). |
 | `Gpio.Backend()` → `string` | libgpiod version string (diagnostics). |
 
-`PinMode`: `Input`, `Output`, `InputPullup`, `InputPulldown`.
-`Level`: `Low` (0), `High` (1).
+**Edge events (Phase 2)**
+
+| Method | Description |
+|---|---|
+| `Gpio.WatchEdge(pin, edge)` → `bool` | Arm kernel edge detection (`Edge.Rising` / `Falling` / `Both`). Re-requests the line as an input; sets no internal pull. |
+| `Gpio.WaitEdge(timeoutMs)` → `GpioEvent` | Block up to `timeoutMs` (negative = forever, 0 = poll) for the next edge on any watched pin. Returns a sentinel with `IsTimeout() == true` on timeout. |
+| `Gpio.PollEdges()` → `List<GpioEvent>` | Non-blocking: drain all edges queued on watched pins, oldest-first. |
+
+Enums / records:
+- `PinMode`: `Input`, `Output`, `InputPullup`, `InputPulldown`.
+- `Level`: `Low` (0), `High` (1).
+- `Edge`: `Rising`, `Falling`, `Both` (`Both` is a trigger only; a delivered event is always `Rising`/`Falling`).
+- `GpioEvent`: `KindOf()` → `Edge`, `PinOf()` → `int`, `TimestampNsOf()` → `int` (kernel monotonic ns), `IsTimeout()` → `bool`.
+
+See [`examples/button_events.am`](examples/button_events.am) for the edge-event loop.
 
 **Pin numbering** is the gpiochip line offset; on a Raspberry Pi this
 equals the BCM GPIO number (`GPIO17` → `17`).
@@ -93,8 +108,8 @@ adds the default user automatically) or run as root.
 This package grows by phase, each a publishable release under
 `Amalgame.Hardware`:
 
-- **v0.1 — GPIO digital I/O** ← you are here
-- v0.2 — GPIO edge events / interrupts (`WatchEdge`, `WaitEdge`, `PollEdges`)
+- **v0.1 — GPIO digital I/O** ✅
+- **v0.2 — GPIO edge events / interrupts** (`WatchEdge`, `WaitEdge`, `PollEdges`) ✅ ← you are here
 - v0.3 — I2C (`/dev/i2c-*`)
 - v0.4 — SPI (`/dev/spidev*`)
 - v0.5 — PWM (sysfs) + UART (termios)

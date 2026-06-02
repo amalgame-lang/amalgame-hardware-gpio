@@ -51,6 +51,35 @@ public class Program {
             fail = fail + 1
         }
 
+        // ── WatchEdge on an out-of-range pin → false ──
+        if (!Gpio.WatchEdge(99999, Edge.Both)) {
+            Console.WriteLine("[PASS] watchedge-out-of-range-false")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] watchedge-out-of-range-false")
+            fail = fail + 1
+        }
+
+        // ── WaitEdge with nothing watched → timeout sentinel ──
+        let ev: GpioEvent = Gpio.WaitEdge(0)
+        if (ev.IsTimeout()) {
+            Console.WriteLine("[PASS] waitedge-timeout-when-idle")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] waitedge-timeout-when-idle")
+            fail = fail + 1
+        }
+
+        // ── PollEdges with nothing watched → empty list ──
+        let evs: List<GpioEvent> = Gpio.PollEdges()
+        if (evs.Count() == 0) {
+            Console.WriteLine("[PASS] polledges-empty-when-idle")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] polledges-empty-when-idle")
+            fail = fail + 1
+        }
+
         // ── Close() is idempotent ──
         Gpio.Close()
         Gpio.Close()

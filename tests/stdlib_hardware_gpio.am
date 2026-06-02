@@ -80,6 +80,34 @@ public class Program {
             fail = fail + 1
         }
 
+        // ── I2c.Open on an out-of-range bus → false ──
+        if (!I2c.Open(99)) {
+            Console.WriteLine("[PASS] i2c-open-out-of-range-false")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] i2c-open-out-of-range-false")
+            fail = fail + 1
+        }
+
+        // ── I2c.ReadByte on an unopened bus → -1 ──
+        if (I2c.ReadByte(99, 0x68) == -1) {
+            Console.WriteLine("[PASS] i2c-read-unopened-minus1")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] i2c-read-unopened-minus1")
+            fail = fail + 1
+        }
+
+        // ── I2c.Scan on an unopened bus → empty list ──
+        let found: List<int> = I2c.Scan(99)
+        if (found.Count() == 0) {
+            Console.WriteLine("[PASS] i2c-scan-unopened-empty")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] i2c-scan-unopened-empty")
+            fail = fail + 1
+        }
+
         // ── Close() is idempotent ──
         Gpio.Close()
         Gpio.Close()

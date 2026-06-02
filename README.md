@@ -97,6 +97,24 @@ Enums / records:
 
 See [`examples/button_events.am`](examples/button_events.am) for the edge-event loop.
 
+**I2C (Phase 3)**
+
+Flat I2C master over `/dev/i2c-<bus>`. Stateless — every call takes `(bus, addr)` and selects the slave internally. Bytes cross as `List<int>` (0..255).
+
+| Method | Description |
+|---|---|
+| `I2c.Open(bus)` → `bool` | Open `/dev/i2c-<bus>` (`false` if I2C disabled / no permission). |
+| `I2c.Close(bus)` | Close the bus fd (idempotent). |
+| `I2c.WriteByte(bus, addr, value)` → `bool` | Write one raw byte. |
+| `I2c.ReadByte(bus, addr)` → `int` | Read one raw byte (`-1` on error). |
+| `I2c.WriteReg(bus, addr, reg, value)` → `bool` | Write `value` to register `reg`. |
+| `I2c.ReadReg(bus, addr, reg)` → `int` | Read register `reg` (`-1` on error). |
+| `I2c.WriteBytes(bus, addr, List<int>)` → `bool` | Raw multi-byte write (≤256). |
+| `I2c.ReadBytes(bus, addr, count)` → `List<int>` | Raw multi-byte read (≤256). |
+| `I2c.Scan(bus)` → `List<int>` | Probe `0x03..0x77`, return responders (like `i2cdetect`). |
+
+`bus` is the i2c adapter number (the N in `/dev/i2c-N`); on a Pi it's usually `1`. See [`examples/i2c_scan.am`](examples/i2c_scan.am).
+
 **Pin numbering** is the gpiochip line offset; on a Raspberry Pi this
 equals the BCM GPIO number (`GPIO17` → `17`).
 
@@ -109,8 +127,8 @@ This package grows by phase, each a publishable release under
 `Amalgame.Hardware`:
 
 - **v0.1 — GPIO digital I/O** ✅
-- **v0.2 — GPIO edge events / interrupts** (`WatchEdge`, `WaitEdge`, `PollEdges`) ✅ ← you are here
-- v0.3 — I2C (`/dev/i2c-*`)
+- **v0.2 — GPIO edge events / interrupts** (`WatchEdge`, `WaitEdge`, `PollEdges`) ✅
+- **v0.3 — I2C** (`/dev/i2c-*`) ✅ ← you are here
 - v0.4 — SPI (`/dev/spidev*`)
 - v0.5 — PWM (sysfs) + UART (termios)
 

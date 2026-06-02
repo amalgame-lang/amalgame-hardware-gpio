@@ -1,0 +1,56 @@
+// i2c_scan.am — list the devices on an I2C bus (Phase 3).
+//
+// The Amalgame equivalent of `i2cdetect -y 1`. Opens /dev/i2c-1,
+// probes 0x03..0x77 and prints every address that ACKs.
+//
+//   Enable I2C first (raspi-config → Interfaces → I2C, or
+//   dtparam=i2c_arm=on), then:
+//     amc build examples/i2c_scan.am -o i2c_scan
+//     ./i2c_scan        # needs the 'i2c' group or sudo
+//
+// Example: an MPU-6050 shows up at 0x68, a PCF8574 LCD at 0x27, etc.
+
+namespace Demo
+
+import Amalgame.Hardware
+
+// Format a byte as two hex digits — the stdlib only ships decimal
+// String_FromInt, and I2C addresses are universally read in hex.
+@c {
+    #include <stdio.h>
+    static code_string demo_hex2(int64_t v) {
+        char* s = (char*) GC_MALLOC(8);
+        snprintf(s, 8, "%02x", (int)(v & 0xff));
+        return s;
+    }
+}
+
+public class Program {
+    private static string Hex2(v: int) {
+        var s: string = ""
+        @c { s = (code_string) demo_hex2(v); }
+        return s
+    }
+
+    public static void Main(string[] args) {
+        let bus: int = 1
+        if (!I2c.Open(bus)) {
+            Console.WriteLine("could not open /dev/i2c-" + String_FromInt(bus) +
+                              " — is I2C enabled? permissions?")
+            return
+        }
+
+        let found: List<int> = I2c.Scan(bus)
+        if (found.Count() == 0) {
+            Console.WriteLine("no devices found on bus " + String_FromInt(bus))
+        } else {
+            Console.WriteLine(String_FromInt(found.Count()) +
+                              " device(s) on bus " + String_FromInt(bus) + ":")
+            for addr in found {
+                Console.WriteLine("  0x" + Program.Hex2(addr))
+            }
+        }
+
+        I2c.Close(bus)
+    }
+}

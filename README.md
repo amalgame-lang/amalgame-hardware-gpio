@@ -142,6 +142,48 @@ spi.Close()
 
 See [`examples/spi_loopback.am`](examples/spi_loopback.am).
 
+**PWM (Phase 5)**
+
+Hardware PWM via the sysfs interface. This class is **pure Amalgame** —
+it drives the peripheral entirely through the `File` stdlib, with no
+`@c` at all.
+
+```amalgame
+let pwm = new Pwm(0, 0)                  // pwmchip0, channel 0
+pwm.SetFrequency(1000, 50)              // 1 kHz, 50% duty
+pwm.Enable()
+pwm.Close()
+```
+
+| Method | Description |
+|---|---|
+| `new Pwm(chip, channel)` / `.IsOpen()` / `.Close()` | Export/unexport the channel. |
+| `.SetFrequency(hz, dutyPercent)` → `bool` | Convenience Hz + 0..100% duty. |
+| `.SetPeriod(ns)` / `.SetDuty(ns)` → `bool` | Raw nanosecond control. |
+| `.Enable()` / `.Disable()` → `bool` | Start/stop output. |
+
+Enable a PWM chip first (e.g. `dtoverlay=pwm` on a Pi); needs write
+access to `/sys/class/pwm`. See [`examples/pwm_breathe.am`](examples/pwm_breathe.am).
+
+**UART (Phase 5)**
+
+Serial port over termios. Instance-based; the fd lives on the object.
+
+```amalgame
+let u = new Uart("/dev/serial0", 115200)
+u.WriteString("AT\r\n")
+let reply = u.ReadString(128)          // up to 128 bytes, 0.5s timeout
+u.Close()
+```
+
+| Method | Description |
+|---|---|
+| `new Uart(device, baud)` / `.IsOpen()` / `.Close()` | Open raw 8N1 (baud 1200..230400). |
+| `.WriteString(s)` → `bool` / `.ReadString(max)` → `string` | Text I/O. |
+| `.WriteBytes(List<int>)` → `bool` / `.ReadBytes(max)` → `List<int>` | Binary I/O (≤4096). |
+
+On a Pi, free the serial console (raspi-config) and join `dialout`. See [`examples/uart_echo.am`](examples/uart_echo.am).
+
 **Pin numbering** is the gpiochip line offset; on a Raspberry Pi this
 equals the BCM GPIO number (`GPIO17` → `17`).
 
@@ -156,16 +198,20 @@ This package grows by phase, each a publishable release under
 - **v0.1 — GPIO digital I/O** ✅
 - **v0.2 — GPIO edge events / interrupts** (`WatchEdge`, `WaitEdge`, `PollEdges`) ✅
 - **v0.3 — I2C** (`/dev/i2c-*`) ✅
-- **v0.4 — SPI** (`/dev/spidev*`) ✅ ← you are here
-- v0.5 — PWM (sysfs) + UART (termios)
+- **v0.4 — SPI** (`/dev/spidev*`) ✅
+- **v0.5 — PWM (sysfs) + UART (termios)** ✅ ← you are here
 
-> **Design note.** `I2c` and `Spi` are instance-based — their state (the
-> device fd + settings) lives on the Amalgame object, and the `@c` blocks
-> are thin, stateless syscall wrappers. `Gpio` keeps a flat, Mcu-style
-> static API by design; since Amalgame has no static/global state, its
-> per-pin handle table necessarily lives in C. The `@c` boundary is kept
-> to the irreducible FFI (libgpiod + Linux ioctls); everything else is
-> Amalgame.
+High-level sensors / displays / motor drivers will live in sibling
+packages (`amalgame-hardware-sensors`, `-display`, …).
+
+> **Design note.** The `@c` boundary is kept to the irreducible FFI
+> (libgpiod, Linux ioctls, termios). Everything else is Amalgame —
+> `Pwm` is in fact **100% Amalgame** (sysfs via the `File` stdlib, no
+> `@c`). `I2c`, `Spi` and `Uart` are instance-based: their device fd +
+> settings live on the Amalgame object, with thin stateless C wrappers.
+> `Gpio` keeps a flat, Mcu-style static API by design; since Amalgame
+> has no static/global state, its per-pin handle table necessarily
+> lives in C.
 
 High-level sensors / displays / motor drivers will live in sibling
 packages (`amalgame-hardware-sensors`, `-display`, …). Bare-metal MCU

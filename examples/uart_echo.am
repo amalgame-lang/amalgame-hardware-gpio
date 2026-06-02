@@ -1,0 +1,38 @@
+// uart_echo.am — talk to a serial device (Phase 5).
+//
+// Sends a line on /dev/serial0 and prints whatever comes back within
+// the read timeout. Loop it back (wire TX→RX) to see your own line
+// echoed, or point it at a modem/GPS/Arduino.
+//
+//   Free the serial console first (raspi-config) and join 'dialout':
+//     amc build examples/uart_echo.am -o uart_echo
+//     ./uart_echo
+
+namespace Demo
+
+import Amalgame.Hardware
+
+public class Program {
+    public static void Main(string[] args) {
+        let u: Uart = new Uart("/dev/serial0", 115200)
+        if (!u.IsOpen()) {
+            Console.WriteLine("could not open /dev/serial0 — freed the console? in 'dialout'?")
+            return
+        }
+
+        let _w: bool = u.WriteString("hello from amalgame\r\n")
+
+        var got: int = 0
+        while (got < 5) {
+            let line: string = u.ReadString(256)
+            if (line == "") {
+                Console.WriteLine("(no data)")
+            } else {
+                Console.WriteLine("rx: " + line)
+                got = got + 1
+            }
+        }
+
+        u.Close()
+    }
+}

@@ -1,9 +1,8 @@
 # Package manifest — amalgame-hardware-gpio
 #
 # Hardware peripheral access for Linux single-board computers
-# (Raspberry Pi and friends). Phases 1–4 ship digital GPIO + edge
-# events + I2C + SPI; PWM / UART land in later phases under the same
-# Amalgame.Hardware namespace.
+# (Raspberry Pi and friends). Covers digital GPIO + edge events, I2C,
+# SPI, PWM and UART under the Amalgame.Hardware namespace.
 #
 #   Gpio                       — flat, Mcu-style digital I/O
 #     .UseChip(path)           — pick the gpiochip (default /dev/gpiochip0)
@@ -34,6 +33,16 @@
 #     .SetMode(0..3) / .SetSpeed(hz) / .SetBits(n)
 #     .Transfer(List<int>) → List<int>   — full-duplex
 #
+#   Pwm                        — hardware PWM via sysfs, PURE Amalgame (Phase 5)
+#     new Pwm(chip, channel) / .IsOpen() / .Close()
+#     .SetFrequency(hz, dutyPercent) | .SetPeriod(ns) / .SetDuty(ns)
+#     .Enable() / .Disable()
+#
+#   Uart                       — serial over termios (Phase 5)
+#     new Uart(device, baud) / .IsOpen() / .Close()
+#     .WriteString(s) / .ReadString(max) → string
+#     .WriteBytes(List<int>) / .ReadBytes(max) → List<int>
+#
 # Backend: libgpiod v2 on the character device /dev/gpiochip* — the
 # kernel-blessed userspace GPIO API, safe on Pi 1→5. The legacy
 # /dev/gpiomem mmap is broken on the Pi 5 (RP1 chip) and sysfs
@@ -47,19 +56,19 @@
 # Installation:
 #
 #   amc package add hardware-gpio
-#   amc package add github.com/amalgame-lang/amalgame-hardware-gpio@v0.4.0
+#   amc package add github.com/amalgame-lang/amalgame-hardware-gpio@v0.5.0
 
 [package]
 name              = "amalgame-hardware-gpio"
-version           = "0.4.0"
+version           = "0.5.0"
 license           = "Apache-2.0"
-description       = "GPIO (digital I/O + edge events), I2C and SPI for Linux SBCs (Raspberry Pi 1→5). GPIO via libgpiod v2; I2C/SPI via /dev/i2c-*//dev/spidev* ioctl. First of the Amalgame.Hardware family (PWM/UART to come)."
+description       = "GPIO (digital I/O + edge events), I2C, SPI, PWM and UART for Linux SBCs (Raspberry Pi 1→5). GPIO via libgpiod v2; I2C/SPI via ioctl; PWM via sysfs (pure Amalgame); UART via termios. The Amalgame.Hardware family."
 authors           = ["Bastien Mouget"]
 required-amalgame = ">=0.8.47"
 schema-version    = 1
 
 [stdlib]
-classes   = ["Gpio", "GpioEvent", "I2c", "Spi"]
+classes   = ["Gpio", "GpioEvent", "I2c", "Spi", "Pwm", "Uart"]
 header    = "facade-stub.h"
 namespace = "Amalgame.Hardware"
 facade    = "facade.am"

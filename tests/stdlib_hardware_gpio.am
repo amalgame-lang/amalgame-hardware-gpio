@@ -127,6 +127,42 @@ public class Program {
         }
         badSpi.Close()
 
+        // ── Pwm on a non-existent chip → not open, SetPeriod false ──
+        let badPwm: Pwm = new Pwm(99, 0)
+        if (!badPwm.IsOpen()) {
+            Console.WriteLine("[PASS] pwm-open-missing-chip-false")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] pwm-open-missing-chip-false")
+            fail = fail + 1
+        }
+        if (!badPwm.SetPeriod(1000000)) {
+            Console.WriteLine("[PASS] pwm-setperiod-closed-false")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] pwm-setperiod-closed-false")
+            fail = fail + 1
+        }
+        badPwm.Close()
+
+        // ── Uart on a non-existent device → not open, ops fail safe ──
+        let badUart: Uart = new Uart("/dev/amc_no_such_tty", 115200)
+        if (!badUart.IsOpen()) {
+            Console.WriteLine("[PASS] uart-open-missing-dev-false")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] uart-open-missing-dev-false")
+            fail = fail + 1
+        }
+        if (!badUart.WriteString("hi") && badUart.ReadString(16) == "") {
+            Console.WriteLine("[PASS] uart-ops-closed-safe")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] uart-ops-closed-safe")
+            fail = fail + 1
+        }
+        badUart.Close()
+
         // ── Close() is idempotent ──
         Gpio.Close()
         Gpio.Close()

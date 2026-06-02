@@ -65,7 +65,7 @@
 
 [package]
 name              = "amalgame-hardware-gpio"
-version           = "0.6.0"
+version           = "0.7.0"
 license           = "Apache-2.0"
 description       = "GPIO (digital I/O + edge events), I2C, SPI, PWM and UART for Linux SBCs (Raspberry Pi 1→5), implementing the portable Amalgame.Hal interfaces. GPIO via libgpiod v2; I2C/SPI via ioctl; PWM via sysfs (pure Amalgame); UART via termios."
 authors           = ["Bastien Mouget"]
@@ -80,4 +80,4 @@ facade    = "facade.am"
 libs      = ["gpiod"]
 
 [dependencies]
-amalgame-hal = ">=0.1.0"
+amalgame-hal = ">=0.2.0"

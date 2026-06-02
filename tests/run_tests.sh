@@ -51,7 +51,7 @@ PROJ_DIR="$BUILD_DIR/proj"; mkdir -p "$PROJ_DIR"
 # else git-clone it at $HAL_TAG (default v0.1.0).
 if [ -n "${HAL_DIR:-}" ]; then HAL="$HAL_DIR"
 else
-    HAL_TAG="${HAL_TAG:-v0.1.0}"
+    HAL_TAG="${HAL_TAG:-v0.2.0}"
     git clone --depth 1 --branch "$HAL_TAG" -q \
         https://github.com/amalgame-lang/amalgame-hal "$BUILD_DIR/hal" \
         || { echo "ERROR: cannot clone amalgame-hal@$HAL_TAG" >&2; exit 2; }

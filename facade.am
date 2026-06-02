@@ -975,7 +975,7 @@ public class Pwm implements PwmOut {
 // Supported bauds: 1200..230400 (others fall back to 9600). On a Pi,
 // /dev/serial0 needs the console freed (raspi-config) and the 'dialout'
 // group.
-public class Uart {
+public class Uart implements SerialPort {
     private fd: int   // -1 = closed / failed
 
     public Uart(device: string, baud: int) {

@@ -22,7 +22,7 @@ jobs:
         include:
           - { runner: ubuntu-24.04,     arch: x86_64, asset: linux-x86_64 }
           - { runner: ubuntu-24.04-arm, arch: arm64,  asset: linux-arm64 }
-        amc-tag: [v0.8.71]
+        amc-tag: [v0.8.72]
     env:
       LIBGPIOD_VERSION: "2.2.4"
     steps:

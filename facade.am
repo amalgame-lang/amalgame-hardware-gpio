@@ -1,5 +1,11 @@
 namespace Amalgame.Hardware
 
+// The Linux backend of the Amalgame.Hal contract: I2c/Spi/Pwm and the
+// GpioOut/GpioIn pin adapters `implements` the portable HAL interfaces,
+// so a component driver written against Amalgame.Hal (DigitalOut,
+// I2cBus, SpiBus, PwmOut) runs on a Raspberry Pi by being handed these.
+import Amalgame.Hal
+
 // ── Amalgame.Hardware — GPIO (Phase 1) ────────────────────
 //
 // Flat, Mcu-style digital I/O for Linux single-board computers,
@@ -697,7 +703,7 @@ public class Gpio {
 // `bus` is the i2c adapter number (the N in /dev/i2c-N), not a GPIO.
 // On a Raspberry Pi the user-facing bus is usually 1. Enable it with
 // raspi-config / dtparam=i2c_arm=on.
-public class I2c {
+public class I2c implements I2cBus {
     private fd: int   // -1 = closed / failed to open
 
     // Open /dev/i2c-<bus>. Check IsOpen() — false if the device is
@@ -803,7 +809,7 @@ public class I2c {
 //
 // `bus`/`cs` are the spidev numbers (e.g. 0.0 / 0.1 on a Pi). Enable
 // SPI with raspi-config / dtparam=spi=on; needs the 'spi' group/root.
-public class Spi {
+public class Spi implements SpiBus {
     private fd:      int   // -1 = closed / failed to open
     private speedHz: int
     private bits:    int
@@ -886,7 +892,7 @@ public class Spi {
 // Periods/duty are nanoseconds at the sysfs level; SetFrequency wraps
 // the Hz↔ns maths. Enable a PWM chip first (e.g. dtoverlay=pwm on a
 // Pi); needs write access to /sys/class/pwm (root or a udev rule).
-public class Pwm {
+public class Pwm implements PwmOut {
     private chip:    int
     private channel: int
     private ok:      bool
@@ -1019,5 +1025,90 @@ public class Uart {
             @c { amhw_uart_close(self->fd); }
             this.fd = -1
         }
+    }
+}
+
+// ── HAL pin adapters ──────────────────────────────────────
+//
+// The flat Gpio API is process-global (Mcu-style), but the portable
+// Amalgame.Hal contract is instance-based (one object per line). These
+// thin adapters bridge the two: `new GpioOut(17)` is a DigitalOut a
+// driver can hold, backed by the flat Gpio calls. Levels cross the HAL
+// boundary as plain ints (0 = low, non-zero = high).
+public class GpioOut implements DigitalOut {
+    private pin: int
+
+    public GpioOut(pin: int) {
+        this.pin = pin
+        let _ok: bool = Gpio.PinMode(pin, PinMode.Output)
+    }
+
+    public void Write(level: int) {
+        if (level == 0) {
+            Gpio.DigitalWrite(this.pin, Level.Low)
+        } else {
+            Gpio.DigitalWrite(this.pin, Level.High)
+        }
+    }
+    public void High()   { Gpio.DigitalWrite(this.pin, Level.High) }
+    public void Low()    { Gpio.DigitalWrite(this.pin, Level.Low) }
+    public void Toggle() { Gpio.Toggle(this.pin) }
+}
+
+public class GpioIn implements DigitalIn {
+    private pin: int
+
+    // Plain input (no internal pull). Use GpioInPull for a button.
+    public GpioIn(pin: int) {
+        this.pin = pin
+        let _ok: bool = Gpio.PinMode(pin, PinMode.Input)
+    }
+
+    public int Read() {
+        if (Gpio.DigitalRead(this.pin) == Level.High) { return 1 }
+        return 0
+    }
+}
+
+// ── SysClock — the Linux backend's Amalgame.Hal.Clock ─────
+@c {
+    #include <time.h>
+    static void amhw_delay_ms(int64_t ms) {
+        if (ms < 0) return;
+        struct timespec ts; ts.tv_sec = ms / 1000; ts.tv_nsec = (ms % 1000) * 1000000L;
+        nanosleep(&ts, NULL);
+    }
+    static void amhw_delay_us(int64_t us) {
+        if (us < 0) return;
+        struct timespec ts; ts.tv_sec = us / 1000000; ts.tv_nsec = (us % 1000000) * 1000L;
+        nanosleep(&ts, NULL);
+    }
+    static int64_t amhw_millis(void) {
+        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+        return (int64_t) ts.tv_sec * 1000 + (int64_t) ts.tv_nsec / 1000000;
+    }
+    static int64_t amhw_micros(void) {
+        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+        return (int64_t) ts.tv_sec * 1000000 + (int64_t) ts.tv_nsec / 1000;
+    }
+}
+
+// Monotonic clock + sleeps for Linux SBCs. Hand one to any driver that
+// needs timing (Servo sweeps, Stepper pacing, HC-SR04 echo timing).
+public class SysClock implements Clock {
+    public SysClock() { }
+
+    public void DelayMs(ms: int) { @c { amhw_delay_ms(ms); } }
+    public void DelayUs(us: int) { @c { amhw_delay_us(us); } }
+
+    public int Millis() {
+        var v: int = 0
+        @c { v = (i64) amhw_millis(); }
+        return v
+    }
+    public int Micros() {
+        var v: int = 0
+        @c { v = (i64) amhw_micros(); }
+        return v
     }
 }

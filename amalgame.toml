@@ -56,20 +56,28 @@
 # Installation:
 #
 #   amc package add hardware-gpio
-#   amc package add github.com/amalgame-lang/amalgame-hardware-gpio@v0.5.0
+#   amc package add github.com/amalgame-lang/amalgame-hardware-gpio@v0.6.0
+#
+# v0.6.0: I2c/Spi/Pwm + the GpioOut/GpioIn pin adapters now `implements`
+# the portable Amalgame.Hal interfaces, so component drivers written
+# against the HAL run on a Pi by being handed these. Needs amc >=0.8.72
+# (working interface dispatch).
 
 [package]
 name              = "amalgame-hardware-gpio"
-version           = "0.5.0"
+version           = "0.6.0"
 license           = "Apache-2.0"
-description       = "GPIO (digital I/O + edge events), I2C, SPI, PWM and UART for Linux SBCs (Raspberry Pi 1→5). GPIO via libgpiod v2; I2C/SPI via ioctl; PWM via sysfs (pure Amalgame); UART via termios. The Amalgame.Hardware family."
+description       = "GPIO (digital I/O + edge events), I2C, SPI, PWM and UART for Linux SBCs (Raspberry Pi 1→5), implementing the portable Amalgame.Hal interfaces. GPIO via libgpiod v2; I2C/SPI via ioctl; PWM via sysfs (pure Amalgame); UART via termios."
 authors           = ["Bastien Mouget"]
-required-amalgame = ">=0.8.47"
+required-amalgame = ">=0.8.72"
 schema-version    = 1
 
 [stdlib]
-classes   = ["Gpio", "GpioEvent", "I2c", "Spi", "Pwm", "Uart"]
+classes   = ["Gpio", "GpioEvent", "I2c", "Spi", "Pwm", "Uart", "GpioOut", "GpioIn", "SysClock"]
 header    = "facade-stub.h"
 namespace = "Amalgame.Hardware"
 facade    = "facade.am"
 libs      = ["gpiod"]
+
+[dependencies]
+amalgame-hal = ">=0.1.0"

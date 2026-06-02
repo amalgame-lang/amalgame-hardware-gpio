@@ -46,6 +46,19 @@ BUILD_DIR="$(mktemp -d -t ahg-tests-XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 PROJ_DIR="$BUILD_DIR/proj"; mkdir -p "$PROJ_DIR"
 
+# v0.6: the facade implements the amalgame-hal interfaces, so it must be
+# compiled with hal as --external. Resolve hal from $HAL_DIR if set,
+# else git-clone it at $HAL_TAG (default v0.1.0).
+if [ -n "${HAL_DIR:-}" ]; then HAL="$HAL_DIR"
+else
+    HAL_TAG="${HAL_TAG:-v0.1.0}"
+    git clone --depth 1 --branch "$HAL_TAG" -q \
+        https://github.com/amalgame-lang/amalgame-hal "$BUILD_DIR/hal" \
+        || { echo "ERROR: cannot clone amalgame-hal@$HAL_TAG" >&2; exit 2; }
+    HAL="$BUILD_DIR/hal"
+fi
+HALF="$HAL/facade.am"
+
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
 echo ""
@@ -87,7 +100,7 @@ rm -f "$WORK_BUILD_DIR"; ln -s "$FACADE_BUILD_DIR" "$WORK_BUILD_DIR"
 ARCHIVE="$FACADE_BUILD_DIR/libamalgame-pkg-Gpio.a"
 
 echo "── Pre-compiling facade.am → libamalgame-pkg-Gpio.a ──"
-"$AMC" --lib --quiet "$PKG_ROOT/facade.am" -o "$FACADE_BUILD_DIR/Gpio-facade" || exit 1
+"$AMC" --lib --quiet "$PKG_ROOT/facade.am" --external "$HALF" -o "$FACADE_BUILD_DIR/Gpio-facade" || exit 1
 gcc -O2 -I"$AMC_RUNTIME" $GPIOD_CFLAGS -w -c \
     "$FACADE_BUILD_DIR/Gpio-facade.c" -o "$FACADE_BUILD_DIR/Gpio-facade.o" || exit 1
 ar rcs "$ARCHIVE" "$FACADE_BUILD_DIR/Gpio-facade.o"
@@ -106,7 +119,7 @@ else echo "ERROR: libamalgame.a not found near amc." >&2; exit 2; fi
 PASS=0; FAIL=0
 echo "── stdlib_hardware_gpio.am ──"
 cp "$SCRIPT_DIR/stdlib_hardware_gpio.am" "$PROJ_DIR/test.am"
-if (cd "$PROJ_DIR" && "$AMC" --quiet -o test test.am) 2>"$PROJ_DIR/build.err" \
+if (cd "$PROJ_DIR" && "$AMC" --quiet -o test test.am --external "$HALF") 2>"$PROJ_DIR/build.err" \
    && gcc -O2 -I"$AMC_RUNTIME" $GPIOD_CFLAGS -w \
         "$PROJ_DIR/test.c" "$FACADE_BUILD_DIR/Gpio-facade.o" "$LIBA" \
         -L"$GPIOD_LIBDIR" -lgpiod -lgc -lm -lz -ldl -lpthread \
@@ -128,7 +141,7 @@ echo "── examples/ ──"
 for ex in "$PKG_ROOT"/examples/*.am; do
     name="$(basename "$ex" .am)"
     cp "$ex" "$PROJ_DIR/$name.am"
-    if (cd "$PROJ_DIR" && "$AMC" --quiet -o "$name" "$name.am") 2>"$PROJ_DIR/$name.err" \
+    if (cd "$PROJ_DIR" && "$AMC" --quiet -o "$name" "$name.am" --external "$HALF") 2>"$PROJ_DIR/$name.err" \
        && gcc -O2 -I"$AMC_RUNTIME" $GPIOD_CFLAGS -w \
             "$PROJ_DIR/$name.c" "$FACADE_BUILD_DIR/Gpio-facade.o" "$LIBA" \
             -L"$GPIOD_LIBDIR" -lgpiod -lgc -lm -lz -ldl -lpthread \

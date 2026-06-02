@@ -42,11 +42,21 @@ namespace Amalgame.Hardware
     #include <sys/ioctl.h>
     #include <linux/i2c.h>
     #include <linux/i2c-dev.h>
+    #include <linux/spi/spidev.h>
 
     /* One libgpiod line-request per configured pin. Simplest
      * mapping for the flat API: PinMode requests (or re-requests)
      * the line, the others look it up by offset. 256 covers every
-     * SBC header with room to spare. */
+     * SBC header with room to spare.
+     *
+     * Why this registry is in C and not Amalgame: Gpio's API is flat
+     * and Mcu-style (Gpio.PinMode(17, …)) by design, which makes its
+     * state process-global. Amalgame has no static fields and no
+     * module-level globals (only instance fields or C statics), so a
+     * flat API has nowhere on the AM side to keep per-pin handles —
+     * the C static table is the only option, not a shortcut. I2c and
+     * Spi, being instance-based, keep their fd on the AM object and
+     * use stateless C wrappers instead. */
     #define AMHW_MAX_PIN 256
     static struct gpiod_chip         *amhw_chip = NULL;
     static struct gpiod_line_request *amhw_req[AMHW_MAX_PIN];
@@ -270,101 +280,150 @@ namespace Amalgame.Hardware
 
     /* ── I2C (Phase 3) ─────────────────────────────────────
      *
-     * One fd per bus (/dev/i2c-<bus>), kept in amhw_i2c_fd. open()
-     * never returns 0 (stdin holds it), so 0 marks "closed". Each op
-     * selects the slave with ioctl(I2C_SLAVE) then read()/write() —
-     * raw SMBus-free access, no libi2c dependency. */
-    #define AMHW_MAX_BUS 32
-    static int amhw_i2c_fd[AMHW_MAX_BUS];
-
-    static int amhw_i2c_open(int64_t bus) {
-        if (bus < 0 || bus >= AMHW_MAX_BUS) return -1;
-        if (amhw_i2c_fd[bus] > 0) return 0;
+     * Stateless FFI wrappers: the bus fd lives on the AM-side I2c
+     * instance, so there's no registry here — every helper takes the
+     * fd. Each op selects the slave with ioctl(I2C_SLAVE) then
+     * read()/write(): raw SMBus-free access, no libi2c dependency. */
+    static int64_t amhw_i2c_open(int64_t bus) {
         char path[32];
         snprintf(path, sizeof(path), "/dev/i2c-%d", (int) bus);
         int fd = open(path, O_RDWR);
+        return (fd < 0) ? -1 : (int64_t) fd;
+    }
+
+    static void amhw_i2c_close(int64_t fd) {
+        if (fd >= 0) close((int) fd);
+    }
+
+    /* Select slave `addr` on the open fd; returns fd or -1. */
+    static int amhw_i2c_sel(int64_t fd, int64_t addr) {
         if (fd < 0) return -1;
-        amhw_i2c_fd[bus] = fd;
-        return 0;
+        if (ioctl((int) fd, I2C_SLAVE, (int) addr) < 0) return -1;
+        return (int) fd;
     }
 
-    static void amhw_i2c_close(int64_t bus) {
-        if (bus < 0 || bus >= AMHW_MAX_BUS) return;
-        if (amhw_i2c_fd[bus] > 0) { close(amhw_i2c_fd[bus]); amhw_i2c_fd[bus] = 0; }
-    }
-
-    /* Select slave `addr` on `bus`; returns the fd or -1. */
-    static int amhw_i2c_sel(int64_t bus, int64_t addr) {
-        int fd = (bus >= 0 && bus < AMHW_MAX_BUS) ? amhw_i2c_fd[bus] : 0;
-        if (fd <= 0) return -1;
-        if (ioctl(fd, I2C_SLAVE, (int) addr) < 0) return -1;
-        return fd;
-    }
-
-    static int amhw_i2c_write(int64_t bus, int64_t addr, AmalgameList* bytes) {
-        int fd = amhw_i2c_sel(bus, addr);
-        if (fd < 0 || !bytes) return -1;
+    static int amhw_i2c_write(int64_t fd, int64_t addr, AmalgameList* bytes) {
+        int d = amhw_i2c_sel(fd, addr);
+        if (d < 0 || !bytes) return -1;
         int n = bytes->size; if (n > 256) n = 256;
         unsigned char buf[256];
         for (int i = 0; i < n; i++)
             buf[i] = (unsigned char)(intptr_t) bytes->data[i];
-        return (write(fd, buf, n) == n) ? 0 : -1;
+        return (write(d, buf, n) == n) ? 0 : -1;
     }
 
-    static int amhw_i2c_read(int64_t bus, int64_t addr, int64_t count,
+    static int amhw_i2c_read(int64_t fd, int64_t addr, int64_t count,
                              AmalgameList* out) {
-        int fd = amhw_i2c_sel(bus, addr);
-        if (fd < 0 || !out) return -1;
+        int d = amhw_i2c_sel(fd, addr);
+        if (d < 0 || !out) return -1;
         int n = (int) count; if (n < 0) n = 0; if (n > 256) n = 256;
         unsigned char buf[256];
-        int r = read(fd, buf, n);
+        int r = read(d, buf, n);
         if (r < 0) return -1;
         for (int i = 0; i < r; i++)
             AmalgameList_add(out, (void*)(intptr_t) buf[i]);
         return 0;
     }
 
-    static int64_t amhw_i2c_read_byte(int64_t bus, int64_t addr) {
-        int fd = amhw_i2c_sel(bus, addr);
-        if (fd < 0) return -1;
+    static int64_t amhw_i2c_read_byte(int64_t fd, int64_t addr) {
+        int d = amhw_i2c_sel(fd, addr);
+        if (d < 0) return -1;
         unsigned char b;
-        return (read(fd, &b, 1) == 1) ? (int64_t) b : -1;
+        return (read(d, &b, 1) == 1) ? (int64_t) b : -1;
     }
 
-    static int amhw_i2c_write_byte(int64_t bus, int64_t addr, int64_t v) {
-        int fd = amhw_i2c_sel(bus, addr);
-        if (fd < 0) return -1;
+    static int amhw_i2c_write_byte(int64_t fd, int64_t addr, int64_t v) {
+        int d = amhw_i2c_sel(fd, addr);
+        if (d < 0) return -1;
         unsigned char b = (unsigned char) v;
-        return (write(fd, &b, 1) == 1) ? 0 : -1;
+        return (write(d, &b, 1) == 1) ? 0 : -1;
     }
 
-    static int64_t amhw_i2c_read_reg(int64_t bus, int64_t addr, int64_t reg) {
-        int fd = amhw_i2c_sel(bus, addr);
-        if (fd < 0) return -1;
+    static int64_t amhw_i2c_read_reg(int64_t fd, int64_t addr, int64_t reg) {
+        int d = amhw_i2c_sel(fd, addr);
+        if (d < 0) return -1;
         unsigned char r = (unsigned char) reg;
-        if (write(fd, &r, 1) != 1) return -1;
+        if (write(d, &r, 1) != 1) return -1;
         unsigned char b;
-        return (read(fd, &b, 1) == 1) ? (int64_t) b : -1;
+        return (read(d, &b, 1) == 1) ? (int64_t) b : -1;
     }
 
-    static int amhw_i2c_write_reg(int64_t bus, int64_t addr, int64_t reg,
+    static int amhw_i2c_write_reg(int64_t fd, int64_t addr, int64_t reg,
                                   int64_t v) {
-        int fd = amhw_i2c_sel(bus, addr);
-        if (fd < 0) return -1;
+        int d = amhw_i2c_sel(fd, addr);
+        if (d < 0) return -1;
         unsigned char buf[2] = { (unsigned char) reg, (unsigned char) v };
-        return (write(fd, buf, 2) == 2) ? 0 : -1;
+        return (write(d, buf, 2) == 2) ? 0 : -1;
     }
 
     /* Probe 0x03..0x77 with a 1-byte read; append responders to out. */
-    static int amhw_i2c_scan(int64_t bus, AmalgameList* out) {
-        int fd = (bus >= 0 && bus < AMHW_MAX_BUS) ? amhw_i2c_fd[bus] : 0;
-        if (fd <= 0 || !out) return -1;
+    static int amhw_i2c_scan(int64_t fd, AmalgameList* out) {
+        if (fd < 0 || !out) return -1;
         for (int a = 0x03; a <= 0x77; a++) {
-            if (ioctl(fd, I2C_SLAVE, a) < 0) continue;
+            if (ioctl((int) fd, I2C_SLAVE, a) < 0) continue;
             unsigned char b;
-            if (read(fd, &b, 1) >= 0)
+            if (read((int) fd, &b, 1) >= 0)
                 AmalgameList_add(out, (void*)(intptr_t) a);
         }
+        return 0;
+    }
+
+    /* ── SPI (Phase 4) ─────────────────────────────────────
+     *
+     * Thin, stateless FFI wrappers — the fd and settings live on the
+     * AM-side Spi instance, so there's no C registry here. Only the
+     * irreducible open/ioctl/transfer calls (and the buffer marshalling
+     * the SPI_IOC_MESSAGE struct demands) are in C. */
+    static int64_t amhw_spi_open(int64_t bus, int64_t cs) {
+        char path[32];
+        snprintf(path, sizeof(path), "/dev/spidev%d.%d", (int) bus, (int) cs);
+        int fd = open(path, O_RDWR);
+        return (fd < 0) ? -1 : (int64_t) fd;
+    }
+
+    static int amhw_spi_set_mode(int64_t fd, int64_t mode) {
+        uint8_t m = (uint8_t) mode;
+        return (ioctl((int) fd, SPI_IOC_WR_MODE, &m) < 0) ? -1 : 0;
+    }
+
+    static int amhw_spi_set_speed(int64_t fd, int64_t hz) {
+        uint32_t s = (uint32_t) hz;
+        return (ioctl((int) fd, SPI_IOC_WR_MAX_SPEED_HZ, &s) < 0) ? -1 : 0;
+    }
+
+    static int amhw_spi_set_bits(int64_t fd, int64_t bits) {
+        uint8_t b = (uint8_t) bits;
+        return (ioctl((int) fd, SPI_IOC_WR_BITS_PER_WORD, &b) < 0) ? -1 : 0;
+    }
+
+    static void amhw_spi_close(int64_t fd) {
+        if (fd >= 0) close((int) fd);
+    }
+
+    /* Full-duplex transfer: clocks out tx[] while clocking in rx[] of
+     * the same length. tx/rx cross as AmalgameList<int>. */
+    static int amhw_spi_xfer(int64_t fd, AmalgameList* tx, AmalgameList* rx,
+                             int64_t speed, int64_t bits) {
+        if (fd < 0 || !tx || !rx) return -1;
+        int n = tx->size;
+        if (n <= 0) return -1;
+        if (n > 4096) n = 4096;
+        unsigned char txb[4096], rxb[4096];
+        for (int i = 0; i < n; i++)
+            txb[i] = (unsigned char)(intptr_t) tx->data[i];
+        memset(rxb, 0, n);
+
+        struct spi_ioc_transfer tr;
+        memset(&tr, 0, sizeof(tr));
+        tr.tx_buf        = (unsigned long) txb;
+        tr.rx_buf        = (unsigned long) rxb;
+        tr.len           = n;
+        tr.speed_hz      = (uint32_t) speed;
+        tr.bits_per_word = (uint8_t) bits;
+
+        if (ioctl((int) fd, SPI_IOC_MESSAGE(1), &tr) < 1) return -1;
+        for (int i = 0; i < n; i++)
+            AmalgameList_add(rx, (void*)(intptr_t) rxb[i]);
         return 0;
     }
 }
@@ -544,89 +603,188 @@ public class Gpio {
 
 // ── I2C (Phase 3) ─────────────────────────────────────────
 //
-// Flat I2C master over the kernel /dev/i2c-<bus> character device.
-// Stateless ops: every call takes (bus, addr) and selects the slave
-// internally, so there's no SetSlave ordering to get wrong. Bytes
-// cross the boundary as List<int> (each element 0..255).
+// I2C master over the kernel /dev/i2c-<bus> character device.
+// Instance-based: the bus fd lives on the Amalgame object (the
+// idiomatic pattern — cf. Redis/TcpClient/FileWatcher), so the C
+// side is just stateless syscall wrappers. Each op takes the slave
+// `addr` and selects it internally, so there's no SetSlave ordering
+// to get wrong. Bytes cross the boundary as List<int> (0..255).
 //
 //     import Amalgame.Hardware
 //
-//     I2c.Open(1)                                  // /dev/i2c-1
-//     for addr in I2c.Scan(1) { ... }              // who's on the bus?
-//     let whoami = I2c.ReadReg(1, 0x68, 0x75)      // MPU-6050 WHO_AM_I
-//     I2c.WriteReg(1, 0x68, 0x6B, 0x00)            // wake it up
-//     let raw = I2c.ReadBytes(1, 0x68, 6)          // burst read
-//     I2c.Close(1)
+//     let bus = new I2c(1)                       // /dev/i2c-1
+//     for addr in bus.Scan() { ... }             // who's on the bus?
+//     let whoami = bus.ReadReg(0x68, 0x75)       // MPU-6050 WHO_AM_I
+//     bus.WriteReg(0x68, 0x6B, 0x00)             // wake it up
+//     let raw = bus.ReadBytes(0x68, 6)           // burst read
+//     bus.Close()
 //
-// Pin numbering note: `bus` is the i2c adapter number (the N in
-// /dev/i2c-N), not a GPIO. On a Raspberry Pi the user-facing bus is
-// usually 1. Enable it with raspi-config / dtparam=i2c_arm=on.
+// `bus` is the i2c adapter number (the N in /dev/i2c-N), not a GPIO.
+// On a Raspberry Pi the user-facing bus is usually 1. Enable it with
+// raspi-config / dtparam=i2c_arm=on.
 public class I2c {
+    private fd: int   // -1 = closed / failed to open
 
-    // Open /dev/i2c-<bus>. Returns false if the device is missing
-    // (I2C not enabled) or not permitted (need the 'i2c' group/root).
-    public static bool Open(bus: int) {
-        var rc: int = -1
-        @c { rc = (i64) amhw_i2c_open(bus); }
-        return rc == 0
+    // Open /dev/i2c-<bus>. Check IsOpen() — false if the device is
+    // missing (I2C not enabled) or not permitted (need 'i2c'/root).
+    public I2c(bus: int) {
+        var f: int = -1
+        @c { f = (i64) amhw_i2c_open(bus); }
+        this.fd = f
     }
 
+    public bool IsOpen() { return this.fd >= 0 }
+
     // Close the bus fd. Idempotent.
-    public static void Close(bus: int) {
-        @c { amhw_i2c_close(bus); }
+    public void Close() {
+        if (this.fd >= 0) {
+            @c { amhw_i2c_close(self->fd); }
+            this.fd = -1
+        }
     }
 
     // Write one raw byte to a device. false on I/O / NACK error.
-    public static bool WriteByte(bus: int, addr: int, value: int) {
+    public bool WriteByte(addr: int, value: int) {
+        if (this.fd < 0) { return false }
         var rc: int = -1
-        @c { rc = (i64) amhw_i2c_write_byte(bus, addr, value); }
+        @c { rc = (i64) amhw_i2c_write_byte(self->fd, addr, value); }
         return rc == 0
     }
 
     // Read one raw byte from a device. -1 on error.
-    public static int ReadByte(bus: int, addr: int) {
+    public int ReadByte(addr: int) {
+        if (this.fd < 0) { return -1 }
         var v: int = -1
-        @c { v = (i64) amhw_i2c_read_byte(bus, addr); }
+        @c { v = (i64) amhw_i2c_read_byte(self->fd, addr); }
         return v
     }
 
     // Write `value` to register `reg` (the common [reg,val] pattern).
-    public static bool WriteReg(bus: int, addr: int, reg: int, value: int) {
+    public bool WriteReg(addr: int, reg: int, value: int) {
+        if (this.fd < 0) { return false }
         var rc: int = -1
-        @c { rc = (i64) amhw_i2c_write_reg(bus, addr, reg, value); }
+        @c { rc = (i64) amhw_i2c_write_reg(self->fd, addr, reg, value); }
         return rc == 0
     }
 
     // Read register `reg`: writes the register pointer, then reads one
     // byte. -1 on error.
-    public static int ReadReg(bus: int, addr: int, reg: int) {
+    public int ReadReg(addr: int, reg: int) {
+        if (this.fd < 0) { return -1 }
         var v: int = -1
-        @c { v = (i64) amhw_i2c_read_reg(bus, addr, reg); }
+        @c { v = (i64) amhw_i2c_read_reg(self->fd, addr, reg); }
         return v
     }
 
     // Write a raw byte sequence (e.g. a register pointer followed by a
     // payload). Up to 256 bytes. false on error.
-    public static bool WriteBytes(bus: int, addr: int, bytes: List<int>) {
+    public bool WriteBytes(addr: int, bytes: List<int>) {
+        if (this.fd < 0) { return false }
         var rc: int = -1
-        @c { rc = (i64) amhw_i2c_write(bus, addr, bytes); }
+        @c { rc = (i64) amhw_i2c_write(self->fd, addr, bytes); }
         return rc == 0
     }
 
     // Read `count` raw bytes (max 256). Returns the bytes read (may be
     // shorter than `count`); empty on error.
-    public static List<int> ReadBytes(bus: int, addr: int, count: int) {
+    public List<int> ReadBytes(addr: int, count: int) {
         var out: List<int> = new List<int>()
-        @c { amhw_i2c_read(bus, addr, count, out); }
+        if (this.fd < 0) { return out }
+        @c { amhw_i2c_read(self->fd, addr, count, out); }
         return out
     }
 
     // Probe addresses 0x03..0x77 with a 1-byte read and return those
-    // that respond. The bus must be Open()ed first. (Read-probing can
-    // disturb write-only devices — same caveat as i2cdetect.)
-    public static List<int> Scan(bus: int) {
+    // that respond. (Read-probing can disturb write-only devices —
+    // same caveat as i2cdetect.)
+    public List<int> Scan() {
         var out: List<int> = new List<int>()
-        @c { amhw_i2c_scan(bus, out); }
+        if (this.fd < 0) { return out }
+        @c { amhw_i2c_scan(self->fd, out); }
         return out
+    }
+}
+
+// ── SPI (Phase 4) ─────────────────────────────────────────
+//
+// SPI master over /dev/spidev<bus>.<cs>. Unlike the flat Gpio/I2c
+// facades this one is instance-based: the device fd and its settings
+// live on the Amalgame object (the idiomatic pattern — cf.
+// FileWatcher in amalgame-io-filewatcher), and the C side is just
+// stateless syscall wrappers. State stays in Amalgame, not in C.
+//
+//     import Amalgame.Hardware
+//
+//     let spi = new Spi(0, 0)        // /dev/spidev0.0
+//     if (spi.IsOpen()) {
+//         spi.SetMode(0)
+//         spi.SetSpeed(1000000)      // 1 MHz
+//         let tx: List<int> = new List<int>()
+//         tx.Add(0x9F)               // e.g. flash JEDEC ID command
+//         tx.Add(0x00)  tx.Add(0x00)  tx.Add(0x00)
+//         let rx: List<int> = spi.Transfer(tx)   // same length as tx
+//         spi.Close()
+//     }
+//
+// `bus`/`cs` are the spidev numbers (e.g. 0.0 / 0.1 on a Pi). Enable
+// SPI with raspi-config / dtparam=spi=on; needs the 'spi' group/root.
+public class Spi {
+    private fd:      int   // -1 = closed / failed to open
+    private speedHz: int
+    private bits:    int
+
+    // Open /dev/spidev<bus>.<cs>. Check IsOpen() afterwards.
+    public Spi(bus: int, cs: int) {
+        var f: int = -1
+        @c { f = (i64) amhw_spi_open(bus, cs); }
+        this.fd      = f
+        this.speedHz = 500000
+        this.bits    = 8
+    }
+
+    public bool IsOpen() { return this.fd >= 0 }
+
+    // SPI mode 0..3 (clock polarity/phase). false on error / closed.
+    public bool SetMode(mode: int) {
+        if (this.fd < 0) { return false }
+        var rc: int = -1
+        @c { rc = (i64) amhw_spi_set_mode(self->fd, mode); }
+        return rc == 0
+    }
+
+    // Max clock speed in Hz. Remembered for each Transfer.
+    public bool SetSpeed(hz: int) {
+        if (this.fd < 0) { return false }
+        this.speedHz = hz
+        var rc: int = -1
+        @c { rc = (i64) amhw_spi_set_speed(self->fd, hz); }
+        return rc == 0
+    }
+
+    // Bits per word (usually 8). Remembered for each Transfer.
+    public bool SetBits(bits: int) {
+        if (this.fd < 0) { return false }
+        this.bits = bits
+        var rc: int = -1
+        @c { rc = (i64) amhw_spi_set_bits(self->fd, bits); }
+        return rc == 0
+    }
+
+    // Full-duplex transfer: clocks out `tx` while clocking in the
+    // same number of bytes. Returns the received bytes (same length
+    // as tx); empty on error or if closed.
+    public List<int> Transfer(tx: List<int>) {
+        var rx: List<int> = new List<int>()
+        if (this.fd < 0) { return rx }
+        @c { amhw_spi_xfer(self->fd, tx, rx, self->speedHz, self->bits); }
+        return rx
+    }
+
+    // Close the device fd. Idempotent.
+    public void Close() {
+        if (this.fd >= 0) {
+            @c { amhw_spi_close(self->fd); }
+            this.fd = -1
+        }
     }
 }

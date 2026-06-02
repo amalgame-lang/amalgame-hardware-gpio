@@ -99,21 +99,48 @@ See [`examples/button_events.am`](examples/button_events.am) for the edge-event 
 
 **I2C (Phase 3)**
 
-Flat I2C master over `/dev/i2c-<bus>`. Stateless — every call takes `(bus, addr)` and selects the slave internally. Bytes cross as `List<int>` (0..255).
+I2C master over `/dev/i2c-<bus>`. Instance-based: `new I2c(bus)` holds the open fd. Each op takes the slave `addr` and selects it internally. Bytes cross as `List<int>` (0..255).
+
+```amalgame
+let bus = new I2c(1)                    // /dev/i2c-1
+for addr in bus.Scan() { /* … */ }
+bus.WriteReg(0x68, 0x6B, 0x00)          // wake an MPU-6050
+let raw = bus.ReadBytes(0x68, 6)        // burst read
+bus.Close()
+```
 
 | Method | Description |
 |---|---|
-| `I2c.Open(bus)` → `bool` | Open `/dev/i2c-<bus>` (`false` if I2C disabled / no permission). |
-| `I2c.Close(bus)` | Close the bus fd (idempotent). |
-| `I2c.WriteByte(bus, addr, value)` → `bool` | Write one raw byte. |
-| `I2c.ReadByte(bus, addr)` → `int` | Read one raw byte (`-1` on error). |
-| `I2c.WriteReg(bus, addr, reg, value)` → `bool` | Write `value` to register `reg`. |
-| `I2c.ReadReg(bus, addr, reg)` → `int` | Read register `reg` (`-1` on error). |
-| `I2c.WriteBytes(bus, addr, List<int>)` → `bool` | Raw multi-byte write (≤256). |
-| `I2c.ReadBytes(bus, addr, count)` → `List<int>` | Raw multi-byte read (≤256). |
-| `I2c.Scan(bus)` → `List<int>` | Probe `0x03..0x77`, return responders (like `i2cdetect`). |
+| `new I2c(bus)` / `.IsOpen()` | Open `/dev/i2c-<bus>`; `IsOpen()` is `false` if I2C is disabled / not permitted. |
+| `.Close()` | Close the bus fd (idempotent). |
+| `.WriteByte(addr, value)` → `bool` / `.ReadByte(addr)` → `int` | Single raw byte (read `-1` on error). |
+| `.WriteReg(addr, reg, value)` → `bool` / `.ReadReg(addr, reg)` → `int` | Register access. |
+| `.WriteBytes(addr, List<int>)` → `bool` / `.ReadBytes(addr, count)` → `List<int>` | Multi-byte (≤256). |
+| `.Scan()` → `List<int>` | Probe `0x03..0x77`, return responders (like `i2cdetect`). |
 
 `bus` is the i2c adapter number (the N in `/dev/i2c-N`); on a Pi it's usually `1`. See [`examples/i2c_scan.am`](examples/i2c_scan.am).
+
+**SPI (Phase 4)**
+
+SPI master over `/dev/spidev<bus>.<cs>`. Instance-based: `new Spi(bus, cs)` holds the fd and per-device settings.
+
+```amalgame
+let spi = new Spi(0, 0)                 // /dev/spidev0.0
+spi.SetMode(0)
+spi.SetSpeed(1000000)                   // 1 MHz
+let rx = spi.Transfer(tx)              // full-duplex; rx.Count() == tx.Count()
+spi.Close()
+```
+
+| Method | Description |
+|---|---|
+| `new Spi(bus, cs)` / `.IsOpen()` / `.Close()` | Open `/dev/spidev<bus>.<cs>`. |
+| `.SetMode(0..3)` → `bool` | Clock polarity/phase. |
+| `.SetSpeed(hz)` → `bool` | Max clock speed. |
+| `.SetBits(n)` → `bool` | Bits per word (usually 8). |
+| `.Transfer(List<int>)` → `List<int>` | Full-duplex; returns the bytes clocked in (same length as tx). |
+
+See [`examples/spi_loopback.am`](examples/spi_loopback.am).
 
 **Pin numbering** is the gpiochip line offset; on a Raspberry Pi this
 equals the BCM GPIO number (`GPIO17` → `17`).
@@ -128,9 +155,17 @@ This package grows by phase, each a publishable release under
 
 - **v0.1 — GPIO digital I/O** ✅
 - **v0.2 — GPIO edge events / interrupts** (`WatchEdge`, `WaitEdge`, `PollEdges`) ✅
-- **v0.3 — I2C** (`/dev/i2c-*`) ✅ ← you are here
-- v0.4 — SPI (`/dev/spidev*`)
+- **v0.3 — I2C** (`/dev/i2c-*`) ✅
+- **v0.4 — SPI** (`/dev/spidev*`) ✅ ← you are here
 - v0.5 — PWM (sysfs) + UART (termios)
+
+> **Design note.** `I2c` and `Spi` are instance-based — their state (the
+> device fd + settings) lives on the Amalgame object, and the `@c` blocks
+> are thin, stateless syscall wrappers. `Gpio` keeps a flat, Mcu-style
+> static API by design; since Amalgame has no static/global state, its
+> per-pin handle table necessarily lives in C. The `@c` boundary is kept
+> to the irreducible FFI (libgpiod + Linux ioctls); everything else is
+> Amalgame.
 
 High-level sensors / displays / motor drivers will live in sibling
 packages (`amalgame-hardware-sensors`, `-display`, …). Bare-metal MCU

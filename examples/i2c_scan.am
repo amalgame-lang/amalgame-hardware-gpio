@@ -33,24 +33,25 @@ public class Program {
     }
 
     public static void Main(string[] args) {
-        let bus: int = 1
-        if (!I2c.Open(bus)) {
-            Console.WriteLine("could not open /dev/i2c-" + String_FromInt(bus) +
+        let busNum: int = 1
+        let bus: I2c = new I2c(busNum)
+        if (!bus.IsOpen()) {
+            Console.WriteLine("could not open /dev/i2c-" + String_FromInt(busNum) +
                               " — is I2C enabled? permissions?")
             return
         }
 
-        let found: List<int> = I2c.Scan(bus)
+        let found: List<int> = bus.Scan()
         if (found.Count() == 0) {
-            Console.WriteLine("no devices found on bus " + String_FromInt(bus))
+            Console.WriteLine("no devices found on bus " + String_FromInt(busNum))
         } else {
             Console.WriteLine(String_FromInt(found.Count()) +
-                              " device(s) on bus " + String_FromInt(bus) + ":")
+                              " device(s) on bus " + String_FromInt(busNum) + ":")
             for addr in found {
                 Console.WriteLine("  0x" + Program.Hex2(addr))
             }
         }
 
-        I2c.Close(bus)
+        bus.Close()
     }
 }

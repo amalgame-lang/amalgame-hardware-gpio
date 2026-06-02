@@ -1,0 +1,58 @@
+// spi_loopback.am — full-duplex SPI transfer (Phase 4).
+//
+// Sends 4 bytes on /dev/spidev0.0 and prints what comes back. Wire
+// MOSI (GPIO10) to MISO (GPIO9) with a jumper and you get a loopback:
+// the received bytes equal the sent ones — a zero-hardware way to
+// prove the SPI path works. With a real device on CE0, you'll see
+// its response instead.
+//
+//   Enable SPI (raspi-config / dtparam=spi=on), then:
+//     amc build examples/spi_loopback.am -o spi_loopback
+//     ./spi_loopback        # needs the 'spi' group or sudo
+
+namespace Demo
+
+import Amalgame.Hardware
+
+@c {
+    #include <stdio.h>
+    static code_string demo_hex2(int64_t v) {
+        char* s = (char*) GC_MALLOC(8);
+        snprintf(s, 8, "%02x", (int)(v & 0xff));
+        return s;
+    }
+}
+
+public class Program {
+    private static string Hex2(v: int) {
+        var s: string = ""
+        @c { s = (code_string) demo_hex2(v); }
+        return s
+    }
+
+    public static void Main(string[] args) {
+        let spi: Spi = new Spi(0, 0)        // /dev/spidev0.0
+        if (!spi.IsOpen()) {
+            Console.WriteLine("could not open /dev/spidev0.0 — SPI enabled? permissions?")
+            return
+        }
+        let _m: bool = spi.SetMode(0)
+        let _s: bool = spi.SetSpeed(1000000)   // 1 MHz
+
+        let tx: List<int> = new List<int>()
+        tx.Add(0xDE)
+        tx.Add(0xAD)
+        tx.Add(0xBE)
+        tx.Add(0xEF)
+
+        let rx: List<int> = spi.Transfer(tx)
+
+        var line: string = "rx:"
+        for b in rx {
+            line = line + " " + Program.Hex2(b)
+        }
+        Console.WriteLine(line)
+
+        spi.Close()
+    }
+}

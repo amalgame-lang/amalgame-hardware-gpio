@@ -1,8 +1,8 @@
 # Package manifest — amalgame-hardware-gpio
 #
 # Hardware peripheral access for Linux single-board computers
-# (Raspberry Pi and friends). Phases 1–3 ship digital GPIO + edge
-# events + I2C; SPI / PWM / UART land in later phases under the same
+# (Raspberry Pi and friends). Phases 1–4 ship digital GPIO + edge
+# events + I2C + SPI; PWM / UART land in later phases under the same
 # Amalgame.Hardware namespace.
 #
 #   Gpio                       — flat, Mcu-style digital I/O
@@ -22,12 +22,17 @@
 #   Edge       — Rising / Falling / Both
 #   GpioEvent  — { KindOf(): Edge, PinOf(): int, TimestampNsOf(): int, IsTimeout(): bool }
 #
-#   I2c                        — flat I2C master over /dev/i2c-<bus> (Phase 3)
-#     .Open(bus) / .Close(bus)
-#     .WriteByte/.ReadByte(bus, addr[, value])
-#     .WriteReg/.ReadReg(bus, addr, reg[, value])
-#     .WriteBytes(bus, addr, List<int>) / .ReadBytes(bus, addr, count) → List<int>
-#     .Scan(bus) → List<int>   — probe responders 0x03..0x77
+#   I2c                        — I2C master over /dev/i2c-<bus> (Phase 3)
+#     new I2c(bus) / .IsOpen() / .Close()
+#     .WriteByte/.ReadByte(addr[, value])
+#     .WriteReg/.ReadReg(addr, reg[, value])
+#     .WriteBytes(addr, List<int>) / .ReadBytes(addr, count) → List<int>
+#     .Scan() → List<int>      — probe responders 0x03..0x77
+#
+#   Spi                        — SPI master over /dev/spidev<bus>.<cs> (Phase 4)
+#     new Spi(bus, cs) / .IsOpen() / .Close()
+#     .SetMode(0..3) / .SetSpeed(hz) / .SetBits(n)
+#     .Transfer(List<int>) → List<int>   — full-duplex
 #
 # Backend: libgpiod v2 on the character device /dev/gpiochip* — the
 # kernel-blessed userspace GPIO API, safe on Pi 1→5. The legacy
@@ -42,19 +47,19 @@
 # Installation:
 #
 #   amc package add hardware-gpio
-#   amc package add github.com/amalgame-lang/amalgame-hardware-gpio@v0.3.0
+#   amc package add github.com/amalgame-lang/amalgame-hardware-gpio@v0.4.0
 
 [package]
 name              = "amalgame-hardware-gpio"
-version           = "0.3.0"
+version           = "0.4.0"
 license           = "Apache-2.0"
-description       = "GPIO (digital I/O + edge events) and I2C for Linux SBCs (Raspberry Pi 1→5). GPIO via libgpiod v2; I2C via /dev/i2c-* ioctl. Flat Mcu-style API. First of the Amalgame.Hardware family (SPI/PWM/UART to come)."
+description       = "GPIO (digital I/O + edge events), I2C and SPI for Linux SBCs (Raspberry Pi 1→5). GPIO via libgpiod v2; I2C/SPI via /dev/i2c-*//dev/spidev* ioctl. First of the Amalgame.Hardware family (PWM/UART to come)."
 authors           = ["Bastien Mouget"]
 required-amalgame = ">=0.8.47"
 schema-version    = 1
 
 [stdlib]
-classes   = ["Gpio", "GpioEvent", "I2c"]
+classes   = ["Gpio", "GpioEvent", "I2c", "Spi"]
 header    = "facade-stub.h"
 namespace = "Amalgame.Hardware"
 facade    = "facade.am"

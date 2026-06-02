@@ -18,25 +18,9 @@ namespace Demo
 
 import Amalgame.Hardware
 
-// A tiny millisecond sleep, inlined so the example stays
-// dependency-free. (amc's Service_Sleep needs the service runtime;
-// the standard library has no general sleep yet.)
-@c {
-    #include <time.h>
-    static void demo_sleep_ms(int64_t ms) {
-        struct timespec ts;
-        ts.tv_sec  = ms / 1000;
-        ts.tv_nsec = (ms % 1000) * 1000000L;
-        nanosleep(&ts, NULL);
-    }
-}
-
 public class Program {
-    private static void SleepMs(ms: int) {
-        @c { demo_sleep_ms(ms); }
-    }
-
     public static void Main(string[] args) {
+        let clk: SysClock = new SysClock()
         Console.WriteLine("libgpiod backend: " + Gpio.Backend())
 
         let led: int = 17
@@ -55,7 +39,7 @@ public class Program {
             if (Gpio.DigitalRead(button) == Level.Low) {
                 Console.WriteLine("button pressed")
             }
-            Program.SleepMs(500)
+            clk.DelayMs(500)
             i = i + 1
         }
 

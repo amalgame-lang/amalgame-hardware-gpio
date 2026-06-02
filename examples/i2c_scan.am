@@ -14,22 +14,14 @@ namespace Demo
 
 import Amalgame.Hardware
 
-// Format a byte as two hex digits — the stdlib only ships decimal
-// String_FromInt, and I2C addresses are universally read in hex.
-@c {
-    #include <stdio.h>
-    static code_string demo_hex2(int64_t v) {
-        char* s = (char*) GC_MALLOC(8);
-        snprintf(s, 8, "%02x", (int)(v & 0xff));
-        return s;
-    }
-}
-
 public class Program {
+    // Format a byte as two hex digits — pure Amalgame (the stdlib ships
+    // decimal String_FromInt; I2C addresses are read in hex).
     private static string Hex2(v: int) {
-        var s: string = ""
-        @c { s = (code_string) demo_hex2(v); }
-        return s
+        let digits: string = "0123456789abcdef"
+        let hi: int = (v / 16) % 16
+        let lo: int = v % 16
+        return String_Substring(digits, hi, 1) + String_Substring(digits, lo, 1)
     }
 
     public static void Main(string[] args) {

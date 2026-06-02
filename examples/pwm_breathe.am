@@ -1,8 +1,8 @@
-// pwm_breathe.am — "breathing" LED on a hardware PWM channel (Phase 5).
+// pwm_breathe.am — "breathing" LED on a hardware PWM channel.
 //
-// Ramps the duty cycle up and down so an LED fades in and out. The Pwm
-// class itself is pure Amalgame (sysfs via File.WriteAll); only the
-// millisecond sleep below drops to @c, since the stdlib has no sleep.
+// Ramps the duty cycle up and down so an LED fades in and out. 100%
+// Amalgame: Pwm drives sysfs via File, SysClock paces via the Clock
+// HAL — no C anywhere.
 //
 //   Wiring: LED on the PWM pin (e.g. GPIO18 = pwmchip0 channel 0 on a
 //           Pi with dtoverlay=pwm). Enable PWM first.
@@ -13,22 +13,9 @@ namespace Demo
 
 import Amalgame.Hardware
 
-@c {
-    #include <time.h>
-    static void demo_sleep_ms(int64_t ms) {
-        struct timespec ts;
-        ts.tv_sec  = ms / 1000;
-        ts.tv_nsec = (ms % 1000) * 1000000L;
-        nanosleep(&ts, NULL);
-    }
-}
-
 public class Program {
-    private static void SleepMs(ms: int) {
-        @c { demo_sleep_ms(ms); }
-    }
-
     public static void Main(string[] args) {
+        let clk: SysClock = new SysClock()
         let pwm: Pwm = new Pwm(0, 0)        // pwmchip0, channel 0
         if (!pwm.IsOpen()) {
             Console.WriteLine("could not export pwmchip0/pwm0 — PWM enabled? permissions?")
@@ -42,12 +29,12 @@ public class Program {
             var d: int = 0
             while (d <= 100) {
                 let _u: bool = pwm.SetFrequency(1000, d)
-                Program.SleepMs(15)
+                clk.DelayMs(15)
                 d = d + 5
             }
             while (d >= 0) {
                 let _u2: bool = pwm.SetFrequency(1000, d)
-                Program.SleepMs(15)
+                clk.DelayMs(15)
                 d = d - 5
             }
             cycle = cycle + 1

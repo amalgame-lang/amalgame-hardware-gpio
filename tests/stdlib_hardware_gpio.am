@@ -1,0 +1,66 @@
+// Stdlib test: Amalgame.Hardware — GPIO digital I/O.
+//
+// These assertions are hardware-free: they exercise the API surface
+// and the libgpiod v2 binding without needing a real (or simulated)
+// gpiochip. The on-hardware / gpio-sim smoke test lives in
+// tests/run_tests.sh, which loads a virtual chip when the kernel
+// supports it.
+//
+// What we can assert deterministically anywhere:
+//   - Backend() returns a non-empty libgpiod version string (proves
+//     the v2 library is actually linked).
+//   - PinMode() on an out-of-range offset fails cleanly (false),
+//     never crashes.
+//   - DigitalRead() on an unconfigured pin is Level.Low, not a trap.
+//   - Close() is idempotent.
+
+namespace Tests
+
+import Amalgame.Hardware
+
+public class Program {
+    public static void Main(string[] args) {
+        var pass: int = 0
+        var fail: int = 0
+
+        // ── Backend() proves libgpiod is linked ──
+        let v: string = Gpio.Backend()
+        if (v != "") {
+            Console.WriteLine("[PASS] backend-version (" + v + ")")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] backend-version empty")
+            fail = fail + 1
+        }
+
+        // ── Out-of-range pin → PinMode returns false, no crash ──
+        if (!Gpio.PinMode(99999, PinMode.Output)) {
+            Console.WriteLine("[PASS] pinmode-out-of-range-false")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] pinmode-out-of-range-false")
+            fail = fail + 1
+        }
+
+        // ── DigitalRead on an unconfigured pin is Low, not a trap ──
+        if (Gpio.DigitalRead(99999) == Level.Low) {
+            Console.WriteLine("[PASS] read-unconfigured-low")
+            pass = pass + 1
+        } else {
+            Console.WriteLine("[FAIL] read-unconfigured-low")
+            fail = fail + 1
+        }
+
+        // ── Close() is idempotent ──
+        Gpio.Close()
+        Gpio.Close()
+        Console.WriteLine("[PASS] close-idempotent")
+        pass = pass + 1
+
+        Console.WriteLine("---")
+        Console.WriteLine(String_FromInt(pass) + " passed, " +
+                          String_FromInt(fail) + " failed")
+        // The runner greps stdout for "[FAIL]" to decide the exit
+        // status — AM's Main is void and there's no exposed exit().
+    }
+}

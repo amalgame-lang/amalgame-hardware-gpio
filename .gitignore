@@ -1,0 +1,7 @@
+core
+build
+*.o
+*.a
+blink
+/lock
+amalgame.lock

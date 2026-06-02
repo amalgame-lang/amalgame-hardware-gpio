@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test (${{ matrix.arch }}, amc ${{ matrix.amc-tag }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Ubuntu 24.04 (Noble) ships libgpiod 2.x in apt — both the
+        # x86_64 GitHub-hosted runner and the free native arm64 runner
+        # (ubuntu-24.04-arm). Bookworm only has 1.6, so we don't test
+        # there. amc 0.8.47+ is required for cross-package enum dispatch.
+        include:
+          - { runner: ubuntu-24.04,     arch: x86_64, asset: linux-x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64,  asset: linux-arm64 }
+        amc-tag: [v0.8.71]
+    steps:
+      - name: Checkout package
+        uses: actions/checkout@v4
+
+      - name: Install system deps (libgc + libgpiod v2)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libgc-dev libgpiod-dev gpiod
+          echo "libgpiod: $(pkg-config --modversion libgpiod)"
+
+      - name: Download amc ${{ matrix.amc-tag }}
+        run: |
+          set -e
+          TAG="${{ matrix.amc-tag }}"; VERSION="${TAG#v}"
+          curl -sSL -o amc.tar.gz \
+            "https://github.com/amalgame-lang/Amalgame/releases/download/${TAG}/amc-${VERSION}-${{ matrix.asset }}.tar.gz"
+          mkdir -p "$RUNNER_TEMP/amc-install"
+          tar -xzf amc.tar.gz -C "$RUNNER_TEMP/amc-install" --strip-components=1
+          echo "AMC=$RUNNER_TEMP/amc-install/bin/amc" >> "$GITHUB_ENV"
+          echo "AMC_RUNTIME=$RUNNER_TEMP/amc-install/share/amalgame/runtime" >> "$GITHUB_ENV"
+
+      - name: Verify amc
+        run: $AMC --version
+
+      - name: Run tests
+        run: ./tests/run_tests.sh "$AMC"

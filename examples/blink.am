@@ -1,0 +1,64 @@
+// blink.am — the GPIO "hello world".
+//
+// Blinks an LED wired to GPIO17 (BCM) and, if a button is wired to
+// GPIO27 with the internal pull-up enabled, prints when it's
+// pressed (button pulls the pin to ground → Level.Low).
+//
+//   Wiring: LED anode → GPIO17 → 330Ω → LED cathode → GND
+//           Button between GPIO27 and GND
+//
+//   Build & run on a Raspberry Pi:
+//     amc build examples/blink.am -o blink
+//     ./blink            # needs the 'gpio' group or sudo
+//
+// Ctrl-C to stop; the kernel reclaims the lines on exit, but we
+// also Close() explicitly for tidiness.
+
+namespace Demo
+
+import Amalgame.Hardware
+
+// A tiny millisecond sleep, inlined so the example stays
+// dependency-free. (amc's Service_Sleep needs the service runtime;
+// the standard library has no general sleep yet.)
+@c {
+    #include <time.h>
+    static void demo_sleep_ms(int64_t ms) {
+        struct timespec ts;
+        ts.tv_sec  = ms / 1000;
+        ts.tv_nsec = (ms % 1000) * 1000000L;
+        nanosleep(&ts, NULL);
+    }
+}
+
+public class Program {
+    private static void SleepMs(ms: int) {
+        @c { demo_sleep_ms(ms); }
+    }
+
+    public static void Main(string[] args) {
+        Console.WriteLine("libgpiod backend: " + Gpio.Backend())
+
+        let led: int = 17
+        let button: int = 27
+
+        if (!Gpio.PinMode(led, PinMode.Output)) {
+            Console.WriteLine("could not open GPIO" + String_FromInt(led) +
+                              " — check permissions / chip path")
+            return
+        }
+        let _b: bool = Gpio.PinMode(button, PinMode.InputPullup)
+
+        var i: int = 0
+        while (i < 20) {
+            Gpio.Toggle(led)
+            if (Gpio.DigitalRead(button) == Level.Low) {
+                Console.WriteLine("button pressed")
+            }
+            Program.SleepMs(500)
+            i = i + 1
+        }
+
+        Gpio.Close()
+    }
+}

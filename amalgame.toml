@@ -1,0 +1,50 @@
+# Package manifest — amalgame-hardware-gpio
+#
+# Hardware peripheral access for Linux single-board computers
+# (Raspberry Pi and friends). Phase 1 ships digital GPIO; I2C / SPI
+# / PWM / UART land in later phases under the same Amalgame.Hardware
+# namespace.
+#
+#   Gpio                       — flat, Mcu-style digital I/O
+#     .UseChip(path)           — pick the gpiochip (default /dev/gpiochip0)
+#     .AutoChip()              — best-effort RP1/Pi-5 vs Pi-4 chip pick
+#     .PinMode(pin, mode)      — Input / Output / InputPullup / InputPulldown
+#     .DigitalWrite(pin, lvl)  — Low / High
+#     .DigitalRead(pin) → Level
+#     .Toggle(pin)
+#     .Release(pin) / .Close()
+#     .Backend() → libgpiod version string
+#
+#   PinMode  — Input / Output / InputPullup / InputPulldown
+#   Level    — Low (0) / High (1)
+#
+# Backend: libgpiod v2 on the character device /dev/gpiochip* — the
+# kernel-blessed userspace GPIO API, safe on Pi 1→5. The legacy
+# /dev/gpiomem mmap is broken on the Pi 5 (RP1 chip) and sysfs
+# /sys/class/gpio is deprecated; neither is used here.
+#
+# BUILD DEPENDENCY: libgpiod v2 (>= 2.0). Note that Raspberry Pi OS
+# / Debian Bookworm only ships libgpiod 1.6 (incompatible API) — on
+# Bookworm install from Debian Trixie/backports or build from source
+# (see README). Debian Trixie and Ubuntu 24.04 ship 2.x in apt.
+#
+# Installation:
+#
+#   amc package add hardware-gpio
+#   amc package add github.com/amalgame-lang/amalgame-hardware-gpio@v0.1.0
+
+[package]
+name              = "amalgame-hardware-gpio"
+version           = "0.1.0"
+license           = "Apache-2.0"
+description       = "GPIO digital I/O for Linux SBCs (Raspberry Pi 1→5) via libgpiod v2 character device. Flat Mcu-style API: PinMode/DigitalWrite/DigitalRead/Toggle. First of the Amalgame.Hardware family (I2C/SPI/PWM/UART to come)."
+authors           = ["Bastien Mouget"]
+required-amalgame = ">=0.8.47"
+schema-version    = 1
+
+[stdlib]
+classes   = ["Gpio"]
+header    = "facade-stub.h"
+namespace = "Amalgame.Hardware"
+facade    = "facade.am"
+libs      = ["gpiod"]

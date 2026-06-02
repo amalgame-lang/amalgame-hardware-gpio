@@ -1,0 +1,241 @@
+namespace Amalgame.Hardware
+
+// ── Amalgame.Hardware — GPIO (Phase 1) ────────────────────
+//
+// Flat, Mcu-style digital I/O for Linux single-board computers,
+// backed by libgpiod v2 on the GPIO character device
+// (/dev/gpiochip*). The surface intentionally mirrors the
+// `Amalgame.Mcu` HAL from docs/proposals/amc-embedded.md so that
+// the same pin code reads the same on a Raspberry Pi (this
+// package) and, later, on bare-metal MCUs:
+//
+//     import Amalgame.Hardware
+//
+//     Gpio.PinMode(17, PinMode.Output)
+//     Gpio.PinMode(27, PinMode.InputPullup)
+//     while (true) {
+//         Gpio.Toggle(17)
+//         if (Gpio.DigitalRead(27) == Level.Low) { ... }   // button pressed
+//         Process_Sleep(500)
+//     }
+//     Gpio.Close()
+//
+// Why libgpiod v2 on the char device: it is the kernel-blessed
+// userspace GPIO interface and works on every Pi (1→5). The old
+// /dev/gpiomem register mmap is broken on the Pi 5 (the GPIO is
+// behind the RP1 southbridge), and the sysfs /sys/class/gpio
+// interface is deprecated and removed from recent kernels.
+//
+// Pin numbering is the gpiochip line offset, which on a Raspberry
+// Pi equals the BCM GPIO number (GPIO17 → offset 17). Permissions:
+// the user must be in the `gpio` group or run as root.
+
+@c {
+    #include <gpiod.h>
+    #include <stdint.h>
+    #include <stdlib.h>
+    #include <string.h>
+
+    /* One libgpiod line-request per configured pin. Simplest
+     * mapping for the flat API: PinMode requests (or re-requests)
+     * the line, the others look it up by offset. 256 covers every
+     * SBC header with room to spare. */
+    #define AMHW_MAX_PIN 256
+    static struct gpiod_chip         *amhw_chip = NULL;
+    static struct gpiod_line_request *amhw_req[AMHW_MAX_PIN];
+    static char amhw_chip_path[256] = "/dev/gpiochip0";
+
+    /* Open the configured chip if not already open. -1 on failure. */
+    static int amhw_ensure_chip(void) {
+        if (amhw_chip) return 0;
+        amhw_chip = gpiod_chip_open(amhw_chip_path);
+        return amhw_chip ? 0 : -1;
+    }
+
+    /* Release every line request and close the chip. */
+    static void amhw_close(void) {
+        for (int i = 0; i < AMHW_MAX_PIN; i++) {
+            if (amhw_req[i]) {
+                gpiod_line_request_release(amhw_req[i]);
+                amhw_req[i] = NULL;
+            }
+        }
+        if (amhw_chip) {
+            gpiod_chip_close(amhw_chip);
+            amhw_chip = NULL;
+        }
+    }
+
+    /* Switch to a different gpiochip; closes everything first so the
+     * next ensure_chip() reopens against the new path. Empty path
+     * keeps the current path (acts as a plain close). */
+    static void amhw_use_chip(code_string path) {
+        amhw_close();
+        if (path && path[0]) {
+            strncpy(amhw_chip_path, path, sizeof(amhw_chip_path) - 1);
+            amhw_chip_path[sizeof(amhw_chip_path) - 1] = '\0';
+        }
+    }
+
+    /* mode: 0=input, 1=output, 2=input pull-up, 3=input pull-down.
+     * Re-requests the line with fresh settings. 0 on success. */
+    static int amhw_pin_mode(int64_t pin, int64_t mode) {
+        if (pin < 0 || pin >= AMHW_MAX_PIN) return -1;
+        if (amhw_ensure_chip() != 0) return -1;
+
+        if (amhw_req[pin]) {
+            gpiod_line_request_release(amhw_req[pin]);
+            amhw_req[pin] = NULL;
+        }
+
+        struct gpiod_line_settings *settings = gpiod_line_settings_new();
+        if (!settings) return -1;
+
+        enum gpiod_line_direction dir =
+            (mode == 1) ? GPIOD_LINE_DIRECTION_OUTPUT
+                        : GPIOD_LINE_DIRECTION_INPUT;
+        gpiod_line_settings_set_direction(settings, dir);
+        if (mode == 2)
+            gpiod_line_settings_set_bias(settings, GPIOD_LINE_BIAS_PULL_UP);
+        else if (mode == 3)
+            gpiod_line_settings_set_bias(settings, GPIOD_LINE_BIAS_PULL_DOWN);
+        if (dir == GPIOD_LINE_DIRECTION_OUTPUT)
+            gpiod_line_settings_set_output_value(settings,
+                                                 GPIOD_LINE_VALUE_INACTIVE);
+
+        struct gpiod_line_config *lcfg = gpiod_line_config_new();
+        unsigned int offset = (unsigned int) pin;
+        int rc = -1;
+        if (lcfg &&
+            gpiod_line_config_add_line_settings(lcfg, &offset, 1, settings) == 0) {
+            struct gpiod_request_config *rcfg = gpiod_request_config_new();
+            if (rcfg) {
+                gpiod_request_config_set_consumer(rcfg, "amalgame-hardware-gpio");
+                struct gpiod_line_request *req =
+                    gpiod_chip_request_lines(amhw_chip, rcfg, lcfg);
+                if (req) {
+                    amhw_req[pin] = req;
+                    rc = 0;
+                }
+                gpiod_request_config_free(rcfg);
+            }
+        }
+        if (lcfg) gpiod_line_config_free(lcfg);
+        gpiod_line_settings_free(settings);
+        return rc;
+    }
+
+    /* level: 0=low/inactive, anything else=high/active. */
+    static int amhw_write(int64_t pin, int64_t level) {
+        if (pin < 0 || pin >= AMHW_MAX_PIN || !amhw_req[pin]) return -1;
+        return gpiod_line_request_set_value(
+            amhw_req[pin], (unsigned int) pin,
+            level ? GPIOD_LINE_VALUE_ACTIVE : GPIOD_LINE_VALUE_INACTIVE);
+    }
+
+    /* Returns 1 (high), 0 (low), or -1 if the pin isn't configured. */
+    static int64_t amhw_read(int64_t pin) {
+        if (pin < 0 || pin >= AMHW_MAX_PIN || !amhw_req[pin]) return -1;
+        enum gpiod_line_value v =
+            gpiod_line_request_get_value(amhw_req[pin], (unsigned int) pin);
+        return (v == GPIOD_LINE_VALUE_ACTIVE) ? 1 : 0;
+    }
+
+    static void amhw_release(int64_t pin) {
+        if (pin < 0 || pin >= AMHW_MAX_PIN) return;
+        if (amhw_req[pin]) {
+            gpiod_line_request_release(amhw_req[pin]);
+            amhw_req[pin] = NULL;
+        }
+    }
+}
+
+// Pin direction and pull configuration. Mirrors the Amalgame.Mcu
+// HAL: InputPullup / InputPulldown enable the line's internal bias
+// so a floating button reads a stable level.
+public enum PinMode {
+    Input
+    Output
+    InputPullup
+    InputPulldown
+}
+
+// Logic level. Ordinal matches the wire value (Low = 0, High = 1).
+public enum Level {
+    Low
+    High
+}
+
+// Flat GPIO facade. All methods are static — there is one process
+// view of the chip, exactly like the Mcu HAL. Call Close() (or let
+// the process exit) to release every requested line back to the
+// kernel.
+public class Gpio {
+
+    // Select the gpiochip character device. Default is
+    // "/dev/gpiochip0", correct for Raspberry Pi 1→4 and the Pi 5's
+    // 40-pin header on current kernels. Closes any lines already
+    // held before switching.
+    public static void UseChip(path: string) {
+        @c { amhw_use_chip(path); }
+    }
+
+    // Configure a pin's direction + pull. Must be called before
+    // DigitalWrite / DigitalRead / Toggle on that pin. Returns false
+    // if the line can't be requested (offset out of range, line busy
+    // in another process, or no accessible gpiochip).
+    public static bool PinMode(pin: int, mode: PinMode) {
+        var m: int = 0
+        if (mode == PinMode.Output)        { m = 1 }
+        if (mode == PinMode.InputPullup)   { m = 2 }
+        if (mode == PinMode.InputPulldown) { m = 3 }
+        var rc: int = -1
+        @c { rc = (i64) amhw_pin_mode(pin, m); }
+        return rc == 0
+    }
+
+    // Drive an output pin. No-op (returns silently) if the pin was
+    // not configured as Output via PinMode.
+    public static void DigitalWrite(pin: int, level: Level) {
+        var v: int = 0
+        if (level == Level.High) { v = 1 }
+        @c { amhw_write(pin, v); }
+    }
+
+    // Read the current level of a configured pin. Returns Level.Low
+    // for an unconfigured pin.
+    public static Level DigitalRead(pin: int) {
+        var v: int = 0
+        @c { v = (i64) amhw_read(pin); }
+        if (v == 1) { return Level.High }
+        return Level.Low
+    }
+
+    // Flip an output pin's level.
+    public static void Toggle(pin: int) {
+        var v: int = 0
+        @c { v = (i64) amhw_read(pin); }
+        var nv: int = 1
+        if (v == 1) { nv = 0 }
+        @c { amhw_write(pin, nv); }
+    }
+
+    // Release one pin back to the kernel without closing the chip.
+    public static void Release(pin: int) {
+        @c { amhw_release(pin); }
+    }
+
+    // Release all pins and close the chip. Safe to call more than
+    // once; PinMode reopens the chip on demand afterwards.
+    public static void Close() {
+        @c { amhw_close(); }
+    }
+
+    // libgpiod version string (e.g. "2.1"), handy for diagnostics
+    // and the "is the v2 backend really linked?" smoke check.
+    public static string Backend() {
+        var s: string = ""
+        @c { s = (code_string) gpiod_api_version(); }
+        return s
+    }
+}

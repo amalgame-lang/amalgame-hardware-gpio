@@ -23,19 +23,19 @@
 # /dev/gpiomem mmap is broken on the Pi 5 (RP1 chip) and sysfs
 # /sys/class/gpio is deprecated; neither is used here.
 #
-# BUILD DEPENDENCY: libgpiod v2 (>= 2.0). Note that Raspberry Pi OS
-# / Debian Bookworm only ships libgpiod 1.6 (incompatible API) — on
-# Bookworm install from Debian Trixie/backports or build from source
-# (see README). Debian Trixie and Ubuntu 24.04 ship 2.x in apt.
+# BUILD DEPENDENCY: libgpiod v2 (>= 2.0). Note that Raspberry Pi OS /
+# Debian Bookworm and Ubuntu 24.04 LTS only ship libgpiod 1.6
+# (incompatible API) — build 2.x from source there (see README).
+# Debian Trixie+ and Ubuntu 24.10+ ship 2.x in apt.
 #
 # Installation:
 #
 #   amc package add hardware-gpio
-#   amc package add github.com/amalgame-lang/amalgame-hardware-gpio@v0.1.0
+#   amc package add github.com/amalgame-lang/amalgame-hardware-gpio@v0.1.1
 
 [package]
 name              = "amalgame-hardware-gpio"
-version           = "0.1.0"
+version           = "0.1.1"
 license           = "Apache-2.0"
 description       = "GPIO digital I/O for Linux SBCs (Raspberry Pi 1→5) via libgpiod v2 character device. Flat Mcu-style API: PinMode/DigitalWrite/DigitalRead/Toggle. First of the Amalgame.Hardware family (I2C/SPI/PWM/UART to come)."
 authors           = ["Bastien Mouget"]

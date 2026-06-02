@@ -15,23 +15,38 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Ubuntu 24.04 (Noble) ships libgpiod 2.x in apt — both the
-        # x86_64 GitHub-hosted runner and the free native arm64 runner
-        # (ubuntu-24.04-arm). Bookworm only has 1.6, so we don't test
-        # there. amc 0.8.47+ is required for cross-package enum dispatch.
+        # Tested on the x86_64 GitHub-hosted runner and the free native
+        # arm64 runner (ubuntu-24.04-arm). Ubuntu 24.04 only ships
+        # libgpiod 1.6 in apt (incompatible), so we build v2 from source
+        # below. amc 0.8.47+ is required for cross-package enum dispatch.
         include:
           - { runner: ubuntu-24.04,     arch: x86_64, asset: linux-x86_64 }
           - { runner: ubuntu-24.04-arm, arch: arm64,  asset: linux-arm64 }
         amc-tag: [v0.8.71]
+    env:
+      LIBGPIOD_VERSION: "2.2.4"
     steps:
       - name: Checkout package
         uses: actions/checkout@v4
 
-      - name: Install system deps (libgc + libgpiod v2)
+      - name: Install system deps (libgc + build tools)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y libgc-dev libgpiod-dev gpiod
-          echo "libgpiod: $(pkg-config --modversion libgpiod)"
+          sudo apt-get install -y libgc-dev build-essential pkg-config
+
+      - name: Build libgpiod v${{ env.LIBGPIOD_VERSION }} from source
+        run: |
+          set -e
+          V="$LIBGPIOD_VERSION"
+          curl -sSLO "https://mirrors.edge.kernel.org/pub/software/libs/libgpiod/libgpiod-${V}.tar.gz"
+          tar xzf "libgpiod-${V}.tar.gz"
+          cd "libgpiod-${V}"
+          ./configure --prefix=/usr/local --enable-tools=yes
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "libgpiod: $(PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --modversion libgpiod)"
 
       - name: Download amc ${{ matrix.amc-tag }}
         run: |

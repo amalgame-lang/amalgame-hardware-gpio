@@ -31,8 +31,8 @@ pkg-config --modversion libgpiod   # want 2.x
 
 | Distro | libgpiod in apt | Action |
 |---|---|---|
-| Debian Trixie, Ubuntu 24.04+ | 2.x | `sudo apt install libgpiod-dev` |
-| **Raspberry Pi OS / Debian Bookworm** | **1.6 (incompatible)** | build 2.x from source (below) or use a Trixie backport |
+| Debian Trixie+, Ubuntu 24.10+ | 2.x | `sudo apt install libgpiod-dev` |
+| **Raspberry Pi OS / Debian Bookworm, Ubuntu 24.04 LTS** | **1.6 (incompatible)** | build 2.x from source (below) |
 
 Build 2.x from source on Bookworm:
 
